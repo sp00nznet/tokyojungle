@@ -12,7 +12,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # =============================================================================
 # ps3recomp runtime
 # =============================================================================
-# Adjust this path to where you have ps3recomp cloned
 set(PS3RECOMP_DIR "${CMAKE_SOURCE_DIR}/../ps3recomp" CACHE PATH "Path to ps3recomp")
 
 if(NOT EXISTS "${PS3RECOMP_DIR}/CMakeLists.txt")
@@ -30,7 +29,6 @@ add_subdirectory(${PS3RECOMP_DIR} ps3recomp EXCLUDE_FROM_ALL)
 # =============================================================================
 set(GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated")
 
-# Collect all generated .c files from the lifter output
 file(GLOB_RECURSE GENERATED_SOURCES "${GENERATED_DIR}/*.c")
 
 if(NOT GENERATED_SOURCES)
@@ -38,7 +36,6 @@ if(NOT GENERATED_SOURCES)
         "No generated source files found in ${GENERATED_DIR}/\n"
         "Run the analysis pipeline first: python scripts/analyze.py"
     )
-    # Create a placeholder so CMake doesn't fail
     set(GENERATED_SOURCES "")
 endif()
 
@@ -52,9 +49,15 @@ add_executable(tokyojungle
 )
 
 target_include_directories(tokyojungle PRIVATE
+    # Our bridge header and game-specific code
     ${CMAKE_SOURCE_DIR}/src
+    # Generated code directory (ppu_recomp.h lives here)
     ${CMAKE_SOURCE_DIR}/generated
+    # ps3recomp public headers (ps3emu/*.h)
     ${PS3RECOMP_DIR}/include
+    # ps3recomp runtime internal headers (ppu_context.h, ppu_memory.h, etc.)
+    ${PS3RECOMP_DIR}/runtime/ppu
+    ${PS3RECOMP_DIR}/runtime/memory
 )
 
 target_link_libraries(tokyojungle PRIVATE
@@ -82,15 +85,17 @@ endif()
 if(MSVC)
     target_compile_options(tokyojungle PRIVATE
         /W3
-        /MP          # Parallel compilation (essential for thousands of generated files)
+        /MP          # Parallel compilation (essential for 135MB generated file)
         /bigobj      # Generated files can be huge
         /utf-8
     )
-    # Disable specific warnings common in generated code
+    # Disable warnings common in generated code
     target_compile_options(tokyojungle PRIVATE
-        /wd4244      # conversion warnings
+        /wd4244      # conversion warnings (uint64 -> uint32 in addr truncation)
         /wd4267      # size_t to uint32 conversion
         /wd4146      # unary minus on unsigned
+        /wd4305      # truncation from double to float
+        /wd4018      # signed/unsigned mismatch
     )
 else()
     target_compile_options(tokyojungle PRIVATE
@@ -98,6 +103,8 @@ else()
         -Wno-unused-variable
         -Wno-unused-function
         -Wno-sign-compare
+        -Wno-parentheses
+        -Wno-unused-but-set-variable
     )
 endif()
 

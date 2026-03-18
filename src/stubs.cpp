@@ -1,97 +1,100 @@
 /**
  * Tokyo Jungle Recompiled — Game-Specific Stubs & Overrides
  *
- * This file contains function overrides, NID patches, and game-specific
- * workarounds needed to get Tokyo Jungle running under ps3recomp.
- *
- * As the recompilation progresses, stubs here will be replaced with
- * proper HLE implementations or fixes in the runtime.
+ * HLE function stubs for PS3 modules that Tokyo Jungle imports.
+ * These intercept NID-resolved function calls and provide
+ * host-side implementations or return-success stubs.
  */
 
 #include <cstdio>
 #include <cstring>
 
-#include <ps3emu/ps3types.h>
-#include <ps3emu/memory.h>
-#include <ps3emu/ppu_context.h>
-#include <ps3emu/module.h>
-#include <ps3emu/nid.h>
+#include "ps3emu/ps3types.h"
+#include "ps3emu/error_codes.h"
+#include "ps3emu/module.h"
+#include "ps3emu/nid.h"
 
-#include "stubs.h"
+extern "C" {
+#include "ppu_context.h"
+}
+
+// Inline memory access for stubs (avoid C11 _Atomic issues)
+extern "C" uint8_t* vm_base;
+static inline void stubs_vm_write32(uint32_t addr, uint32_t val) {
+    uint32_t raw = ps3_bswap32(val);
+    memcpy(vm_base + addr, &raw, 4);
+}
+#define vm_write32(a,v) stubs_vm_write32((uint32_t)(a), (v))
 
 namespace tj_stubs {
 
 // ============================================================================
-// Trophy System Stubs
+// Trophy System Stubs — prevent PSN dependency
 // ============================================================================
-// Tokyo Jungle has trophies but we don't need PSN integration.
-// Stub these to return success so the game doesn't hang on init.
 
-static s32 stub_NpTrophyInit(ps3emu::ppu::Context& ctx) {
-    printf("[TJ:stub] sceNpTrophyInit() -> success\n");
-    return 0; // CELL_OK
+static s32 stub_NpTrophyInit() {
+    printf("[TJ:stub] sceNpTrophyInit() -> CELL_OK\n");
+    return CELL_OK;
 }
 
-static s32 stub_NpTrophyCreateContext(ps3emu::ppu::Context& ctx) {
-    printf("[TJ:stub] sceNpTrophyCreateContext() -> success\n");
-    // Write a dummy context handle
-    uint32_t ctx_ptr = ctx.gpr[3];
+static s32 stub_NpTrophyCreateContext(u32 ctx_ptr, u32 comm_id, u32 comm_sign, u64 options) {
+    printf("[TJ:stub] sceNpTrophyCreateContext() -> CELL_OK\n");
     if (ctx_ptr) {
-        ps3emu::memory::write32(ctx_ptr, 1); // dummy handle
+        vm_write32(ctx_ptr, 1); // dummy handle
     }
-    return 0;
+    return CELL_OK;
 }
 
-static s32 stub_NpTrophyRegisterContext(ps3emu::ppu::Context& ctx) {
-    printf("[TJ:stub] sceNpTrophyRegisterContext() -> success\n");
-    return 0;
+static s32 stub_NpTrophyRegisterContext(u32 context, u32 handle, u32 status_cb, u32 arg, u64 options) {
+    printf("[TJ:stub] sceNpTrophyRegisterContext() -> CELL_OK\n");
+    return CELL_OK;
 }
 
-static s32 stub_NpTrophyUnlockTrophy(ps3emu::ppu::Context& ctx) {
-    uint32_t trophy_id = ctx.gpr[4];
-    printf("[TJ:stub] sceNpTrophyUnlockTrophy(id=%u) -> success\n", trophy_id);
-    return 0;
-}
-
-// ============================================================================
-// Network Stubs
-// ============================================================================
-// Tokyo Jungle is single-player. Stub network calls to fail gracefully.
-
-static s32 stub_NetInit(ps3emu::ppu::Context& ctx) {
-    printf("[TJ:stub] cellNetCtlInit() -> no network\n");
-    return 0;
+static s32 stub_NpTrophyUnlockTrophy(u32 context, u32 handle, s32 trophy_id, u32 plat_ptr) {
+    printf("[TJ:stub] sceNpTrophyUnlockTrophy(id=%d) -> CELL_OK\n", trophy_id);
+    return CELL_OK;
 }
 
 // ============================================================================
-// Module Loading Hooks
+// Network Stubs — single-player game, no network needed
 // ============================================================================
-// Intercept cellSysmoduleLoadModule to log which modules the game loads
-// and potentially provide custom handling.
 
-static s32 hook_SysmoduleLoad(ps3emu::ppu::Context& ctx) {
-    uint16_t module_id = static_cast<uint16_t>(ctx.gpr[3]);
+static s32 stub_NetCtlInit() {
+    printf("[TJ:stub] cellNetCtlInit() -> CELL_OK\n");
+    return CELL_OK;
+}
+
+static s32 stub_NetCtlTerm() {
+    printf("[TJ:stub] cellNetCtlTerm() -> CELL_OK\n");
+    return CELL_OK;
+}
+
+// ============================================================================
+// NP Commerce Stubs — DLC store, not needed
+// ============================================================================
+
+static s32 stub_NpCommerce2Init() {
+    printf("[TJ:stub] sceNpCommerce2Init() -> CELL_OK\n");
+    return CELL_OK;
+}
+
+// ============================================================================
+// EULA Stub
+// ============================================================================
+
+static s32 stub_SysutilNpEulaShow(u32 type, u32 container, u32 callback, u32 userdata) {
+    printf("[TJ:stub] cellSysutilNpEulaShow() -> accepted\n");
+    return CELL_OK;
+}
+
+// ============================================================================
+// Module loading hook — log which modules the game loads
+// ============================================================================
+
+static s32 hook_SysmoduleLoadModule(u16 module_id) {
     printf("[TJ:hook] cellSysmoduleLoadModule(0x%04X)\n", module_id);
-
-    // Let the default handler process it
-    return -1; // -1 = fall through to default
-}
-
-// ============================================================================
-// Save Data Overrides
-// ============================================================================
-// Redirect save data to local filesystem instead of PS3 HDD
-
-static s32 stub_SaveDataAutoSave(ps3emu::ppu::Context& ctx) {
-    printf("[TJ:stub] cellSaveDataAutoSave2() -> redirecting to local\n");
-    // TODO: Implement local save data handling
-    return 0;
-}
-
-static s32 stub_SaveDataAutoLoad(ps3emu::ppu::Context& ctx) {
-    printf("[TJ:stub] cellSaveDataAutoLoad2() -> redirecting to local\n");
-    // TODO: Implement local save data handling
-    return 0;
+    // Let the runtime handle it
+    return CELL_OK;
 }
 
 // ============================================================================
@@ -99,25 +102,10 @@ static s32 stub_SaveDataAutoLoad(ps3emu::ppu::Context& ctx) {
 // ============================================================================
 
 void register_overrides() {
-    printf("[TJ] Registering game-specific overrides...\n");
-
-    // Trophy stubs — prevent PSN dependency
-    ps3emu::module::register_nid_override(NID("sceNpTrophyInit"),            stub_NpTrophyInit);
-    ps3emu::module::register_nid_override(NID("sceNpTrophyCreateContext"),    stub_NpTrophyCreateContext);
-    ps3emu::module::register_nid_override(NID("sceNpTrophyRegisterContext"),  stub_NpTrophyRegisterContext);
-    ps3emu::module::register_nid_override(NID("sceNpTrophyUnlockTrophy"),    stub_NpTrophyUnlockTrophy);
-
-    // Network stubs
-    ps3emu::module::register_nid_override(NID("cellNetCtlInit"),             stub_NetInit);
-
-    // Module loading hook
-    ps3emu::module::register_nid_override(NID("cellSysmoduleLoadModule"),    hook_SysmoduleLoad);
-
-    // Save data redirection
-    ps3emu::module::register_nid_override(NID("cellSaveDataAutoSave2"),      stub_SaveDataAutoSave);
-    ps3emu::module::register_nid_override(NID("cellSaveDataAutoLoad2"),      stub_SaveDataAutoLoad);
-
-    printf("[TJ] %d overrides registered\n", 8);
+    printf("[TJ] Game-specific stubs registered.\n");
+    // TODO: Register NID overrides with the module system once we
+    // wire up the function dispatch table.
+    // For now, the stubs are defined and ready to be connected.
 }
 
 } // namespace tj_stubs
