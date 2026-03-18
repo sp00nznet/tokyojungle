@@ -1,0 +1,57 @@
+# Build output
+build/
+out/
+
+# Generated recompiled code (large, machine-generated)
+generated/
+
+# Game files — never commit copyrighted data
+input/
+*.elf
+*.ELF
+*.bin
+*.BIN
+*.self
+*.SELF
+*.pkg
+*.PKG
+*.zip
+*.rar
+*.7z
+*.iso
+*.ISO
+
+# Save data
+savedata/
+
+# Crypto keys — do not distribute
+data/keys
+data/ldr_curves
+data/vsh_curves
+*.rap
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln.docstates
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json

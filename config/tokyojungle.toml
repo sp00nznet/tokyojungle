@@ -1,0 +1,99 @@
+# Tokyo Jungle Recompiled - ps3recomp Configuration
+# Game: Tokyo Jungle (NPUA80523)
+# Developer: Crispy's / Japan Studio
+# Publisher: Sony Computer Entertainment
+
+[input]
+# Path to decrypted EBOOT.ELF — you must provide this yourself
+elf_path = "input/EBOOT.ELF"
+# Optional: PARAM.SFO for title metadata
+param_sfo = "input/PARAM.SFO"
+
+[output]
+output_dir = "generated"
+function_prefix = "tj_"
+generate_function_table = true
+
+[modules]
+# HLE module configuration
+# Tokyo Jungle is a 3D action game — it uses a broad set of PS3 libraries
+#
+# Core system
+cellSysutil        = "hle"
+cellSysmodule      = "hle"
+sys_process        = "hle"
+sys_prx            = "hle"
+sys_memory         = "hle"
+
+# Graphics — RSX/GCM is the big one
+cellGcmSys         = "hle"    # RSX command buffer & state management
+cellResc           = "hle"    # Resolution scaling (may be used for output)
+
+# Audio
+cellAudio          = "hle"
+cellSoundSynth     = "auto"   # Unknown if Tokyo Jungle uses this
+cellAdec           = "hle"    # Audio decoding (cutscenes, BGM)
+
+# Video
+cellVdec           = "hle"    # Video decoding (cutscenes, intros)
+cellDmux           = "hle"    # Demuxer for media containers
+
+# Input
+cellPad            = "hle"    # DualShock 3 controller input
+cellKb             = "auto"   # Keyboard (unlikely but check)
+
+# Filesystem
+cellFs             = "hle"    # File system access
+cellGame           = "hle"    # Game data & save management
+cellSaveData       = "hle"    # Save data management
+
+# Network (TJ has no online, but PSN trophy support)
+cellSsl            = "hle"
+cellHttp           = "hle"
+cellNet            = "hle"
+
+# Misc
+cellPngDec         = "hle"    # PNG texture loading
+cellJpgDec         = "hle"    # JPG texture loading
+cellFont           = "hle"    # Font rendering (UI text)
+cellFontFT         = "hle"    # FreeType font backend
+cellL10n           = "hle"    # Localization
+cellRtc            = "hle"    # Real-time clock
+cellSpurs          = "hle"    # SPU task management
+
+# Trophy support
+cellNpTrophy       = "hle"
+
+[memory]
+main_memory_mb = 256
+vram_mb = 256
+thread_stack_size = "1MB"
+
+[threading]
+max_ppu_threads = 8
+max_spu_threads = 6
+host_thread_affinity = "auto"
+
+[graphics]
+# Start with null backend — no rendering yet
+# Switch to "vulkan" or "d3d12" once RSX translation is implemented
+backend = "null"
+width = 1280
+height = 720
+vsync = true
+# Tokyo Jungle renders at 720p natively
+internal_scale = 1.0
+
+[audio]
+backend = "wasapi"
+sample_rate = 48000
+buffer_size = 1024
+
+[debug]
+log_hle_calls = true
+log_missing_nids = true
+dump_disassembly = false
+# Enable verbose logging during early development
+verbose = true
+# Breakpoint addresses (add as discovered)
+breakpoints = []
