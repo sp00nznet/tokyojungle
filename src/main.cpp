@@ -38,6 +38,9 @@ lv2_syscall_table g_lv2_syscalls = {};
 // ELF loader
 #include "elf_loader.h"
 
+// Import table resolver and HLE heap
+#include "import_resolver.h"
+
 // Dispatch table externs (types from recomp_bridge.h, defined in dispatch_table.c)
 
 static recomp_func_t dispatch_lookup(uint32_t guest_addr) {
@@ -110,6 +113,9 @@ int main(int argc, char* argv[])
     printf("[TJ] Code: 0x%08X (%.1f MB), Data: 0x%08X (%.1f KB + %.1f MB BSS)\n",
            elf.code_base, elf.code_size / (1024.0 * 1024.0),
            elf.data_base, elf.data_size / 1024.0, elf.bss_size / (1024.0 * 1024.0));
+
+    // 2b. Resolve import table (populate PLT function descriptors)
+    resolve_all_imports(elf.toc);
 
     // 3. Initialize PPU context
     ppu_context_init(&g_main_ctx);
