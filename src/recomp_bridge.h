@@ -127,9 +127,5 @@ static inline int __builtin_clzll(unsigned long long x) {
 }
 #endif
 
-/* Syscall handler stub */
-static inline void lv2_syscall(ppu_context* ctx) {
-    uint64_t syscall_id = ctx->gpr[11];
-    printf("[TJ] lv2_syscall(%llu) — not implemented\n",
-           (unsigned long long)syscall_id);
-}
+/* LV2 syscall dispatch — uses the runtime's full dispatch table */
+#include "lv2_syscall_table.h"

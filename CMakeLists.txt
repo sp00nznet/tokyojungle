@@ -58,6 +58,8 @@ target_include_directories(tokyojungle PRIVATE
     # ps3recomp runtime internal headers (ppu_context.h, ppu_memory.h, etc.)
     ${PS3RECOMP_DIR}/runtime/ppu
     ${PS3RECOMP_DIR}/runtime/memory
+    # LV2 syscall dispatch
+    ${PS3RECOMP_DIR}/runtime/syscalls
 )
 
 target_link_libraries(tokyojungle PRIVATE

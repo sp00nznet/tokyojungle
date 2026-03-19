@@ -24,10 +24,15 @@
 extern "C" {
 #include "ppu_context.h"
 #include "vm.h"
+#include "lv2_syscall_table.h"
 }
 
 // vm_base definition (declared extern in vm.h)
 uint8_t* vm_base = nullptr;
+
+// Global module registry and syscall table (declared extern in headers)
+ps3_module_registry g_ps3_module_registry = {};
+lv2_syscall_table g_lv2_syscalls = {};
 
 // ELF loader
 #include "elf_loader.h"
@@ -81,6 +86,14 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
     printf("[TJ] VM initialized (base=%p)\n", (void*)vm_base);
+
+    // 1b. Commit page 0 as null-pointer guard (reads return 0 instead of crashing)
+    vm_commit(0, 0x10000);
+    printf("[TJ] Page 0 guard committed (64KB)\n");
+
+    // 1c. Initialize LV2 syscall dispatch table
+    lv2_register_all_syscalls(&g_lv2_syscalls);
+    printf("[TJ] LV2 syscall table initialized\n");
 
     // 2. Load ELF
     const char* elf_path = "input/EBOOT.ELF";
