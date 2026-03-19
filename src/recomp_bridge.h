@@ -129,3 +129,37 @@ static inline int __builtin_clzll(unsigned long long x) {
 
 /* LV2 syscall dispatch — uses the runtime's full dispatch table */
 #include "lv2_syscall_table.h"
+
+/*
+ * Indirect call dispatch.
+ * The lifter emits ((void(*)(ppu_context*))ctx->ctr)(ctx) for bctr/bctrl
+ * instructions, but ctx->ctr holds a PS3 guest address, not a host pointer.
+ * We dispatch through the function table instead.
+ */
+typedef void (*recomp_func_t)(ppu_context* ctx);
+typedef struct dispatch_entry_t {
+    uint32_t guest_addr;
+    recomp_func_t host_func;
+} dispatch_entry_t;
+extern const dispatch_entry_t g_dispatch_table[];
+extern const int g_dispatch_table_size;
+
+static inline void ppc_indirect_call(ppu_context* ctx) {
+    uint32_t target = (uint32_t)ctx->ctr;
+
+    /* Binary search the dispatch table */
+    int lo = 0, hi = g_dispatch_table_size - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (g_dispatch_table[mid].guest_addr == target) {
+            g_dispatch_table[mid].host_func(ctx);
+            return;
+        } else if (g_dispatch_table[mid].guest_addr < target) {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    printf("[TJ] WARNING: indirect call to unmapped address 0x%08X\n", target);
+}

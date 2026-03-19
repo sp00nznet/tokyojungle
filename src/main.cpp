@@ -25,6 +25,7 @@ extern "C" {
 #include "ppu_context.h"
 #include "vm.h"
 #include "lv2_syscall_table.h"
+#include "recomp_bridge.h"
 }
 
 // vm_base definition (declared extern in vm.h)
@@ -37,14 +38,7 @@ lv2_syscall_table g_lv2_syscalls = {};
 // ELF loader
 #include "elf_loader.h"
 
-// Dispatch table (defined in generated/dispatch_table.c)
-typedef void (*recomp_func_t)(ppu_context* ctx);
-struct dispatch_entry_t {
-    uint32_t guest_addr;
-    recomp_func_t host_func;
-};
-extern "C" const dispatch_entry_t g_dispatch_table[];
-extern "C" const int g_dispatch_table_size;
+// Dispatch table externs (types from recomp_bridge.h, defined in dispatch_table.c)
 
 static recomp_func_t dispatch_lookup(uint32_t guest_addr) {
     int lo = 0, hi = g_dispatch_table_size - 1;
@@ -93,6 +87,12 @@ int main(int argc, char* argv[])
 
     // 1c. Initialize LV2 syscall dispatch table
     lv2_register_all_syscalls(&g_lv2_syscalls);
+
+    // Register game-specific syscall stubs (return CELL_OK silently)
+    // Syscall 988 (0x3DC) — sys_config/debug, called during CRT init
+    static auto syscall_stub_ok = [](ppu_context*) -> int64_t { return 0; };
+    lv2_syscall_register(&g_lv2_syscalls, 988, syscall_stub_ok);
+
     printf("[TJ] LV2 syscall table initialized\n");
 
     // 2. Load ELF
