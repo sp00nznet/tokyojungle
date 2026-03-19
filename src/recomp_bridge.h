@@ -161,5 +161,7 @@ static inline void ppc_indirect_call(ppu_context* ctx) {
         }
     }
 
-    printf("[TJ] WARNING: indirect call to unmapped address 0x%08X\n", target);
+    printf("[TJ] WARNING: indirect call to unmapped address 0x%08X (r3=0x%08X r4=0x%08X LR=0x%08X)\n",
+           target, (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4], (uint32_t)ctx->lr);
+    ctx->gpr[3] = 0; /* return NULL/OK */
 }
