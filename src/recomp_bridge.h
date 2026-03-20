@@ -144,10 +144,39 @@ typedef struct dispatch_entry_t {
 extern const dispatch_entry_t g_dispatch_table[];
 extern const int g_dispatch_table_size;
 
+/*
+ * Runtime HLE dispatch table — for dynamically registered HLE import handlers.
+ * Checked before the compile-time dispatch table so HLE imports take priority.
+ */
+#define HLE_DISPATCH_MAX 512
+typedef struct {
+    uint32_t guest_addr;
+    recomp_func_t handler;
+} hle_dispatch_entry_t;
+
+extern hle_dispatch_entry_t g_hle_dispatch[];
+extern int g_hle_dispatch_count;
+
+static inline void hle_register(uint32_t guest_addr, recomp_func_t handler) {
+    if (g_hle_dispatch_count < HLE_DISPATCH_MAX) {
+        g_hle_dispatch[g_hle_dispatch_count].guest_addr = guest_addr;
+        g_hle_dispatch[g_hle_dispatch_count].handler = handler;
+        g_hle_dispatch_count++;
+    }
+}
+
 static inline void ppc_indirect_call(ppu_context* ctx) {
     uint32_t target = (uint32_t)ctx->ctr;
 
-    /* Binary search the dispatch table */
+    /* Check runtime HLE dispatch first (small table, linear scan) */
+    for (int i = 0; i < g_hle_dispatch_count; i++) {
+        if (g_hle_dispatch[i].guest_addr == target) {
+            g_hle_dispatch[i].handler(ctx);
+            return;
+        }
+    }
+
+    /* Binary search the compile-time dispatch table */
     int lo = 0, hi = g_dispatch_table_size - 1;
     while (lo <= hi) {
         int mid = (lo + hi) / 2;

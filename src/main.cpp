@@ -35,11 +35,18 @@ uint8_t* vm_base = nullptr;
 ps3_module_registry g_ps3_module_registry = {};
 lv2_syscall_table g_lv2_syscalls = {};
 
+// Runtime HLE dispatch table (declared extern in recomp_bridge.h)
+hle_dispatch_entry_t g_hle_dispatch[HLE_DISPATCH_MAX] = {};
+int g_hle_dispatch_count = 0;
+
 // ELF loader
 #include "elf_loader.h"
 
 // Import table resolver and HLE heap
 #include "import_resolver.h"
+
+// HLE import handlers (cellGcm, malloc, thread, etc.)
+#include "hle_imports.h"
 
 // Dispatch table externs (types from recomp_bridge.h, defined in dispatch_table.c)
 
@@ -116,6 +123,9 @@ int main(int argc, char* argv[])
 
     // 2b. Resolve import table (populate PLT function descriptors)
     resolve_all_imports(elf.toc);
+
+    // 2c. Register HLE import handlers for critical functions
+    register_hle_imports(elf.toc);
 
     // 3. Initialize PPU context
     ppu_context_init(&g_main_ctx);

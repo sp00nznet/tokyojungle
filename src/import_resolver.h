@@ -43,7 +43,7 @@ static uint32_t g_heap_ptr   = 0x02000000;  // Current allocation pointer
 static uint32_t g_heap_end   = 0x08000000;  // 96 MB heap space
 static int      g_heap_inited = 0;
 
-static void hle_heap_init() {
+void hle_heap_init() {
     if (g_heap_inited) return;
     // Commit the heap region
     vm_commit(g_heap_base, g_heap_end - g_heap_base);
@@ -53,7 +53,7 @@ static void hle_heap_init() {
            g_heap_base, g_heap_end, (g_heap_end - g_heap_base) / (1024*1024));
 }
 
-static uint32_t hle_malloc(uint32_t size) {
+uint32_t hle_malloc(uint32_t size) {
     if (!g_heap_inited) hle_heap_init();
     // Align to 16 bytes
     size = (size + 15) & ~15u;
@@ -69,7 +69,7 @@ static uint32_t hle_malloc(uint32_t size) {
     return addr;
 }
 
-static uint32_t hle_calloc(uint32_t count, uint32_t size) {
+uint32_t hle_calloc(uint32_t count, uint32_t size) {
     uint32_t total = count * size;
     uint32_t addr = hle_malloc(total);
     if (addr) {
@@ -78,7 +78,7 @@ static uint32_t hle_calloc(uint32_t count, uint32_t size) {
     return addr;
 }
 
-static uint32_t hle_memalign(uint32_t align, uint32_t size) {
+uint32_t hle_memalign(uint32_t align, uint32_t size) {
     if (!g_heap_inited) hle_heap_init();
     if (align < 16) align = 16;
     // Align the current pointer
@@ -86,7 +86,7 @@ static uint32_t hle_memalign(uint32_t align, uint32_t size) {
     return hle_malloc(size);
 }
 
-static void hle_free(uint32_t addr) {
+void hle_free(uint32_t addr) {
     // Bump allocator doesn't free — this is fine for initial bring-up
     (void)addr;
 }
@@ -261,4 +261,28 @@ static void resolve_all_imports(uint32_t toc) {
 
     printf("[HLE] Import table populated (%u OPDs created)\n",
            (g_next_opd - HLE_OPD_BASE) / 8);
+
+    // =====================================================================
+    // Patch unresolved function pointers (0x39800000) in the data segment.
+    // The PS3 dynamic linker normally patches these, but since we load the
+    // raw ELF without relocation processing, they remain as placeholders.
+    // Replace with the address of our generic HLE stub's OPD.
+    // =====================================================================
+    // Scan both code and data segments for unresolved function pointers.
+    // The value 0x39800000 appears in function descriptors (OPD entries)
+    // as the code address field. Replace with our generic HLE stub's
+    // guest address so ppc_indirect_call can dispatch it.
+    uint32_t scan_start = 0x010000;
+    uint32_t scan_end   = 0x340000 + 0x8CE208;
+    int patched = 0;
+    uint8_t target_be[4] = {0x39, 0x80, 0x00, 0x00}; // 0x39800000 big-endian
+    for (uint32_t addr = scan_start; addr < scan_end - 3; addr += 4) {
+        if (memcmp(vm_base + addr, target_be, 4) == 0) {
+            // Replace code address with our HLE stub address (in dispatch table)
+            import_write32(addr, HLE_STUB_RETURN_OK);
+            patched++;
+        }
+    }
+    printf("[HLE] Patched %d unresolved function pointers (0x39800000 -> 0x%08X)\n",
+           patched, HLE_STUB_RETURN_OK);
 }
