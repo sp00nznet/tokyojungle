@@ -203,9 +203,12 @@ int main(int argc, char* argv[])
             printf("\n[TJ] Function returned. r3=0x%llX\n",
                    (unsigned long long)g_main_ctx.gpr[3]);
         }
-        __except(EXCEPTION_EXECUTE_HANDLER) {
+        __except(GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
+                 EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
             DWORD code = GetExceptionCode();
             printf("\n[TJ] CRASH! Exception code: 0x%08lX\n", code);
+            printf("[TJ] CTR (last indirect target): 0x%08X\n",
+                   (uint32_t)g_main_ctx.ctr);
             printf("[TJ] PPU state at crash:\n");
             printf("[TJ]   r1 (SP):  0x%08X\n", (uint32_t)g_main_ctx.gpr[1]);
             printf("[TJ]   r2 (TOC): 0x%08X\n", (uint32_t)g_main_ctx.gpr[2]);

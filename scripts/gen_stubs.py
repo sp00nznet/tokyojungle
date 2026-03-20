@@ -242,11 +242,11 @@ void func_00010200(ppu_context* ctx) {
 
 
 def main():
+    global TOC_VALUE
     parser = argparse.ArgumentParser(description='Post-lift processing for Tokyo Jungle')
     parser.add_argument('--toc', default=f'0x{TOC_VALUE:08X}', help='TOC value (default: 0x00359220)')
     args = parser.parse_args()
 
-    global TOC_VALUE
     TOC_VALUE = int(args.toc, 16)
 
     print("=== Tokyo Jungle Post-Lift Processing ===\n")
