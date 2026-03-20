@@ -125,6 +125,7 @@ extern void     hle_heap_init();
 #define HLE_ADDR_GAME_GET_PARAM_INT HLE_ADDR(122)
 // Generic return-OK
 #define HLE_ADDR_GENERIC_OK         HLE_ADDR(200)
+#define HLE_ADDR_SILENT_OK          HLE_ADDR(201)
 
 /* ========================================================================
  * HLE Handler Implementations
@@ -132,6 +133,11 @@ extern void     hle_heap_init();
 
 // --- Generic return-OK stub ---
 static void hle_generic_ok(ppu_context* ctx) {
+    ctx->gpr[3] = 0;
+}
+
+// --- Silent return-OK stub (for mass-patched OPDs) ---
+static void hle_silent_ok(ppu_context* ctx) {
     ctx->gpr[3] = 0;
 }
 
@@ -332,11 +338,11 @@ static void hle_time_get(ppu_context* ctx) {
 static int g_gcm_inited = 0;
 
 static void hle_gcm_init(ppu_context* ctx) {
-    // cellGcmInit(cmdSize, ioSize, ioAddress)
+    // _cellGcmInitBody(cmdSize, ioSize, ioAddress)
     uint32_t cmd_size = (uint32_t)ctx->gpr[3];
     uint32_t io_size  = (uint32_t)ctx->gpr[4];
     uint32_t io_addr  = (uint32_t)ctx->gpr[5];
-    printf("[HLE] cellGcmInit(cmdSize=0x%X, ioSize=0x%X, ioAddr=0x%08X)\n",
+    printf("[HLE] _cellGcmInitBody(cmdSize=0x%X, ioSize=0x%X, ioAddr=0x%08X)\n",
            cmd_size, io_size, io_addr);
 
     // Commit RSX local memory
@@ -604,10 +610,11 @@ static void register_hle_imports(uint32_t toc) {
     hle_register(HLE_ADDR_PROCESS_EXIT, hle_process_exit);
 
     // --- cellGcmSys (key functions) ---
-    // NID 0x15BAE46B = cellGcmInit (from imports: stub=0x3424BC)
-    // Note: NID doesn't match — need to find the actual init stub
-    // Using the first unresolved GCM stub for now
-    // We identified these by NID resolution:
+    // NID 0x15BAE46B = _cellGcmInitBody, stub=0x3424BC
+    resolve_import(0x3424BC, HLE_ADDR_GCM_INIT, toc);
+    hle_register(HLE_ADDR_GCM_INIT, hle_gcm_init);
+    printf("[HLE]   _cellGcmInitBody -> stub=0x3424BC, HLE=0x%08X\n", HLE_ADDR_GCM_INIT);
+
     resolve_import(0x3424CC, HLE_ADDR_GCM_ADDR_TO_OFFSET, toc);
     hle_register(HLE_ADDR_GCM_ADDR_TO_OFFSET, hle_gcm_addr_to_offset);
 
@@ -658,6 +665,23 @@ static void register_hle_imports(uint32_t toc) {
 
     resolve_import(0x3424AC, HLE_ADDR_GCM_GET_TILED_PITCH, toc);
     hle_register(HLE_ADDR_GCM_GET_TILED_PITCH, hle_generic_ok);
+
+    // Remaining resolved GCM NIDs:
+    // 0x21397818 = _cellGcmSetFlipCommand, stub=0x3424C4
+    resolve_import(0x3424C4, HLE_ADDR_GENERIC_OK, toc);
+    // 0xD8F88E1A = _cellGcmSetFlipCommandWithWaitLabel, stub=0x342584
+    resolve_import(0x342584, HLE_ADDR_GENERIC_OK, toc);
+    // 0x63387071 = cellGcmGetLastFlipTime, stub=0x34250C
+    resolve_import(0x34250C, HLE_ADDR_GENERIC_OK, toc);
+    // 0xD0B1D189 = cellGcmSetTile, stub=0x34257C
+    resolve_import(0x34257C, HLE_ADDR_GENERIC_OK, toc);
+    // 0xD9B7653E = cellGcmUnbindTile, stub=0x34258C
+    resolve_import(0x34258C, HLE_ADDR_GENERIC_OK, toc);
+    // 0xA75640E8 = cellGcmUnbindZcull, stub=0x34255C
+    resolve_import(0x34255C, HLE_ADDR_GENERIC_OK, toc);
+    // 0xA53D12AE = cellGcmSetDisplayBuffer, stub=0x34254C
+    resolve_import(0x34254C, HLE_ADDR_GCM_SET_DISPLAY_BUF, toc);
+    hle_register(HLE_ADDR_GCM_SET_DISPLAY_BUF, hle_generic_ok);
 
     // --- cellSysutil ---
     resolve_import(0x34273C, HLE_ADDR_SYSUTIL_REG_CB, toc);
@@ -733,8 +757,9 @@ static void register_hle_imports(uint32_t toc) {
     resolve_import(0x3424A8, HLE_ADDR_GAME_GET_PARAM_INT, toc);
     hle_register(HLE_ADDR_GAME_GET_PARAM_INT, hle_generic_ok);
 
-    // Register the generic OK handler
+    // Register generic and silent OK handlers
     hle_register(HLE_ADDR_GENERIC_OK, hle_generic_ok);
+    hle_register(HLE_ADDR_SILENT_OK, hle_silent_ok);
 
     printf("[HLE] Registered %d HLE handlers\n", g_hle_dispatch_count);
 }

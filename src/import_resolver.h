@@ -142,9 +142,12 @@ static void resolve_import(uint32_t import_slot, uint32_t code_addr, uint32_t to
  * a few shared stubs and point many imports to the same stub.
  * ====================================================================== */
 
-// Well-known stub addresses (these functions exist in ppu_stubs.c or ppu_recomp.c)
-// We reuse existing CRT stub addresses for generic return-OK behavior
-#define HLE_STUB_RETURN_OK 0x0025FC00  // __sys_initialize — returns r3=0
+// Well-known stub addresses
+// For import table default: use a silent return-OK address from hle_imports.h
+// (registered at runtime in register_hle_imports)
+#define HLE_STUB_RETURN_OK   0x01100324  // HLE_ADDR_SILENT_OK = HLE_ADDR(201)
+// For OPD patching: same silent stub
+#define HLE_STUB_SILENT_OK   0x01100324
 
 static void resolve_all_imports(uint32_t toc) {
     // Commit the OPD area
