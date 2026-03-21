@@ -168,6 +168,14 @@ static inline void hle_register(uint32_t guest_addr, recomp_func_t handler) {
 static inline void ppc_indirect_call(ppu_context* ctx) {
     uint32_t target = (uint32_t)ctx->ctr;
 
+    /* Null pointer guard */
+    if (target == 0) {
+        printf("[TJ] WARNING: indirect call to NULL (r3=0x%08X r4=0x%08X)\n",
+               (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4]);
+        ctx->gpr[3] = 0;
+        return;
+    }
+
     /* Check runtime HLE dispatch first (small table, linear scan) */
     for (int i = 0; i < g_hle_dispatch_count; i++) {
         if (g_hle_dispatch[i].guest_addr == target) {
