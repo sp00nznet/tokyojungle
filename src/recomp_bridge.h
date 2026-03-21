@@ -198,6 +198,49 @@ static inline void ppc_indirect_call(ppu_context* ctx) {
         }
     }
 
+    /*
+     * Fallback: if target is in the data segment, it might be a function
+     * descriptor (OPD) address. Read the code address from the OPD and
+     * try dispatching to that instead. This handles vtable dispatch where
+     * the game reads an OPD pointer from a vtable and calls through it.
+     *
+     * OPD format: { uint32_t code_addr, uint32_t toc }
+     */
+    if (target >= 0x340000 && target < 0xC0E208) {
+        uint32_t code_addr = vm_read32(target);
+        if (code_addr != 0 && code_addr != target) {
+            /* Try dispatching to the code address from the OPD */
+            ctx->ctr = code_addr;
+            /* Save/restore TOC from OPD */
+            uint32_t saved_toc = (uint32_t)ctx->gpr[2];
+            ctx->gpr[2] = vm_read32(target + 4);
+
+            /* Search compile-time dispatch table for code_addr */
+            lo = 0; hi = g_dispatch_table_size - 1;
+            while (lo <= hi) {
+                int mid = (lo + hi) / 2;
+                if (g_dispatch_table[mid].guest_addr == code_addr) {
+                    g_dispatch_table[mid].host_func(ctx);
+                    ctx->gpr[2] = saved_toc;
+                    return;
+                } else if (g_dispatch_table[mid].guest_addr < code_addr) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            /* Also check HLE dispatch */
+            for (int i = 0; i < g_hle_dispatch_count; i++) {
+                if (g_hle_dispatch[i].guest_addr == code_addr) {
+                    g_hle_dispatch[i].handler(ctx);
+                    ctx->gpr[2] = saved_toc;
+                    return;
+                }
+            }
+            ctx->gpr[2] = saved_toc;
+        }
+    }
+
     printf("[TJ] WARNING: indirect call to unmapped address 0x%08X (r3=0x%08X r4=0x%08X LR=0x%08X)\n",
            target, (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4], (uint32_t)ctx->lr);
     ctx->gpr[3] = 0; /* return NULL/OK */
