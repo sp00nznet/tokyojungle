@@ -14,24 +14,27 @@ So we're doing it ourselves.
 
 **Tokyo Jungle Recompiled** is a native PC port built using [ps3recomp](https://github.com/sp00nznet/ps3recomp) — a static recompilation toolchain that translates PS3 PowerPC binaries into native C code, then compiles them as x86-64 executables. No emulation at runtime. No compatibility layers. Just raw, recompiled native code.
 
-## Status: Phase 6 — Game Init Completes, Main Loop Reached
+## Status: Phase 7 — Game Runs Through Main, Iterating Game Loop
 
-> **This is the first 3D title to attempt ps3recomp.** The game's initialization runs to completion and execution enters the main game loop. No crashes. 35,210 functions lifted from the original binary.
+> **This is the first 3D title to attempt ps3recomp.** The game now runs end-to-end through CRT init, _cellGcmInitBody, and into the main game loop, alive indefinitely. 35,208 PPU functions lifted, 1 unmapped indirect-call site remaining. Adapted to ps3recomp v0.5.1.
 
 | Milestone | Status |
 |-----------|--------|
-| Binary analysis & function discovery | **Done** — 35,210 functions lifted |
-| PPU disassembly & code lifting | **Done** — Full convergence (iterative OPD discovery) |
-| Project scaffold & build system | **Done** — 18MB native executable |
+| Binary analysis & function discovery | **Done** — 35,208 functions (find_functions + OPD scan) |
+| PPU disassembly & code lifting | **Done** — ps3recomp v0.5.1 lifter, 4 body overrides |
+| Project scaffold & build system | **Done** — 32MB native exe, MSVC + Visual Studio 2022 |
 | ELF loading & VM setup | **Done** — 4GB address space, segments loaded |
-| CRT initialization | **Done** — _start through __libc_start, all CRT stubs |
+| CRT initialization | **Done** — _start through __libc_start, 11 CRT stubs |
 | LV2 syscall dispatch | **Done** — Full dispatch table, TTY, memory, threading |
 | Import table resolution (PLT/NID) | **Done** — 318 NIDs, 61 HLE handlers, OPD patching |
-| Game init (game_init) | **Done** — Reaches cellGcmInit and main loop |
-| HLE module stubs (cellGcm, cellPad, etc.) | **In Progress** — Stubs return OK, need real impls |
-| Graphics backend (RSX -> Vulkan/D3D12) | Not Started |
-| Audio (cellAudio -> WASAPI/SDL) | Not Started |
-| Input (cellPad -> XInput/SDL) | Not Started |
+| Vtable / OPD-only function discovery | **Done** — scripts/scan_opds.py recovers 1,897 fns |
+| Guest callback dispatch hook | **Done** — `g_ps3_guest_caller` → tj_guest_caller |
+| Game init (game_init) | **Done** — Past _cellGcmInitBody, into main loop |
+| RIP-resolving watchdog | **Done** — `tj_install_watchdog` for diagnosing hangs |
+| HLE module stubs (cellGcm, cellPad, etc.) | **In Progress** — silent-ok for many, real impls needed |
+| Graphics backend (RSX → D3D12) | **In Progress** — upstream has D3D12 backend, not wired in |
+| Audio (cellAudio → WASAPI/SDL) | Not Started |
+| Input (cellPad → XInput/SDL) | Not Started |
 | SPU task handling | Not Started |
 | Survival Mode playable | Not Started |
 | Story Mode playable | Not Started |
@@ -39,19 +42,23 @@ So we're doing it ourselves.
 
 ### What's Working
 
-- **35,210 PPU functions** statically recompiled to native C and compiled to x86-64
+- **35,208 PPU functions** statically recompiled to native C++ and compiled to x86-64
+- **ps3recomp v0.5.1 runtime** — D3D12 backend available, RSX command processor, FIFO watchdog, real `cellSaveData` / `cellSysutil` / `cellGcmSys` implementations
+- **OPD-scan pass** (`scripts/scan_opds.py`) recovers vtable-only functions the lifter doesn't discover statically
+- **Guest callback dispatch** (`g_ps3_guest_caller`) — HLE bridges can fire guest callbacks for sysutil events / vblank / save-data completion
 - **CRT initialization** chain runs cleanly (argc/argv setup, TLS, heap, SPU stubs)
-- **Import resolution** for all 24 PS3 modules (cellGcmSys, cellSysutil, cellPad, cellAudio, sysPrxForUser, etc.)
-- **Indirect call dispatch** through function pointer tables and vtables (OPD fallback)
-- **LV2 syscall handling** with dispatch table for threading, memory, filesystem, events
-- **Game initialization** completes — subsystem init, cellGcmInit, enters main loop
-- **No crashes** — game runs until vsync/flip wait (expected with null renderer)
+- **Import resolution** for all 24 PS3 modules
+- **Indirect call dispatch** through function pointer tables and vtables (OPD fallback + linear HLE search + binary-search dispatch table)
+- **LV2 syscall handling** for threading, memory, filesystem, events
+- **Game initialization** completes — subsystem init, _cellGcmInitBody, main loop entered
+- **Watchdog tooling** — RIP-to-guest-function resolver and call-rate sampling for diagnosing guest spins
 
 ### Current Blockers
 
-- **Null renderer** — Game loop waits for vsync/flip events that never arrive
-- **Stubbed subsystems** — Subsystem registration loop and memory pool init are stubbed
-- **CRT vsnprintf** — Game's internal printf crashes on format strings (sprintf dispatcher stubbed)
+- **No renderer** — RSX commands aren't being submitted; game runs the loop but draws nothing (upstream D3D12 backend is built but not yet wired into TJ)
+- **Many NULL indirect calls** — late-init phase iterates a vtable region (`0x003CCxxx`) where the vtable hasn't been populated. Guarded (returns r3=0) but indicates a missing constructor or HLE bridge
+- **One unmapped call** at `0x00041920` — only remaining static-discovery gap
+- **No input/audio/graphics output** — backends not wired
 
 ## How It Works
 

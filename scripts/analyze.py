@@ -47,8 +47,11 @@ def find_tools_dir() -> Path:
 
 
 def run_tool(tools_dir: Path, script: str, args: list[str], desc: str) -> bool:
-    """Run a ps3recomp Python tool."""
-    script_path = tools_dir / script
+    """Run a Python tool. `script` may be a bare filename (relative to
+    `tools_dir`, e.g. ps3recomp tools) or an absolute path (e.g. our local
+    scripts/scan_opds.py)."""
+    sp = Path(script)
+    script_path = sp if sp.is_absolute() else tools_dir / script
     if not script_path.exists():
         print(f"ERROR: Tool not found: {script_path}")
         return False
@@ -122,19 +125,27 @@ def main():
     output = str(OUTPUT_DIR)
 
     # The upstream lifter (v0.5.1+) folds ELF parsing, NID resolution and
-    # disassembly into the lifter itself; we only need find_functions then
-    # ppu_lifter. Older multi-phase analyze flow has been retired.
+    # disassembly into the lifter itself; we only need find_functions plus
+    # an OPD-scan pass (the new lifter doesn't discover vtable-only
+    # functions on its own; we recover them by walking the data segment for
+    # OPD entries pointing into the code segment).
     stages = [
         ("functions", "find_functions.py",
          [elf, "--output", f"{output}/functions.json"],
          "Phase 1: Discovering function boundaries"),
 
+        ("opds", str(PROJECT_ROOT / "scripts" / "scan_opds.py"),
+         ["--in",  f"{output}/functions.json",
+          "--out", f"{output}/functions_with_opds.json",
+          "--elf", elf],
+         "Phase 2: Recovering vtable-only functions via OPD scan"),
+
         ("lift", "ppu_lifter.py",
-         [elf, "--functions", f"{output}/functions.json",
+         [elf, "--functions", f"{output}/functions_with_opds.json",
           "--output", output,
           "--header-name", "ppu_recomp.h",
           "--source-name", "ppu_recomp.c"],
-         "Phase 2: Lifting PPU to C++"),
+         "Phase 3: Lifting PPU to C++"),
     ]
 
     # Skip stages if requested
