@@ -44,6 +44,7 @@ venv/
 *.user
 *.sln.docstates
 .idea/
+.claude/
 
 # OS
 .DS_Store

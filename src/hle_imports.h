@@ -137,7 +137,25 @@ static void hle_generic_ok(ppu_context* ctx) {
 }
 
 // --- Silent return-OK stub (for mass-patched OPDs) ---
+//
+// Diagnoses retry-loops on unresolved imports: prints unique caller LRs and
+// arg patterns the first ~30 hits, then logs every 10000th hit thereafter
+// so a tight loop becomes visible without flooding stdout.
 static void hle_silent_ok(ppu_context* ctx) {
+    static int s_call_count = 0;
+    static uint32_t s_last_lr = 0;
+    s_call_count++;
+    uint32_t lr = (uint32_t)ctx->lr;
+    if (s_call_count <= 30 || (lr != s_last_lr) || (s_call_count % 10000) == 0) {
+        fprintf(stderr,
+            "[silent_ok #%d] LR=0x%08X r3=0x%llX r4=0x%llX r5=0x%llX\n",
+            s_call_count, lr,
+            (unsigned long long)ctx->gpr[3],
+            (unsigned long long)ctx->gpr[4],
+            (unsigned long long)ctx->gpr[5]);
+        fflush(stderr);
+        s_last_lr = lr;
+    }
     ctx->gpr[3] = 0;
 }
 

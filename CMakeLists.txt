@@ -29,7 +29,9 @@ add_subdirectory(${PS3RECOMP_DIR} ps3recomp EXCLUDE_FROM_ALL)
 # =============================================================================
 set(GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated")
 
-file(GLOB_RECURSE GENERATED_SOURCES "${GENERATED_DIR}/*.c")
+file(GLOB_RECURSE GENERATED_SOURCES CONFIGURE_DEPENDS
+    "${GENERATED_DIR}/*.c"
+    "${GENERATED_DIR}/*.cpp")
 
 if(NOT GENERATED_SOURCES)
     message(WARNING
@@ -45,6 +47,7 @@ endif()
 add_executable(tokyojungle
     src/main.cpp
     src/stubs.cpp
+    src/dispatch_glue.cpp
     ${GENERATED_SOURCES}
 )
 

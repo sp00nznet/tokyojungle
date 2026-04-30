@@ -141,8 +141,15 @@ typedef struct dispatch_entry_t {
     uint32_t guest_addr;
     recomp_func_t host_func;
 } dispatch_entry_t;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern const dispatch_entry_t g_dispatch_table[];
 extern const int g_dispatch_table_size;
+#ifdef __cplusplus
+}
+#endif
 
 /*
  * Runtime HLE dispatch table — for dynamically registered HLE import handlers.
@@ -154,8 +161,14 @@ typedef struct {
     recomp_func_t handler;
 } hle_dispatch_entry_t;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern hle_dispatch_entry_t g_hle_dispatch[];
 extern int g_hle_dispatch_count;
+#ifdef __cplusplus
+}
+#endif
 
 static inline void hle_register(uint32_t guest_addr, recomp_func_t handler) {
     if (g_hle_dispatch_count < HLE_DISPATCH_MAX) {

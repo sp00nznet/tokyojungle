@@ -2,25 +2,30 @@
 """
 Post-lift processing for Tokyo Jungle recompiled code.
 
-After running the lifter (ppu_lifter.py), this script:
-1. Patches ppu_recomp.h to use recomp_bridge.h
-2. Fixes MSVC-incompatible __int128 mulhd patterns
-3. Replaces stack-based TOC restores with constant TOC
-4. Fixes bctr tail calls to use ppc_indirect_call()
-5. Replaces bctrl indirect calls with ppc_indirect_call()
-6. Removes CRT functions that are overridden in ppu_stubs.c
-7. Generates dispatch_table.c
-8. Generates ppu_stubs.c with manual CRT overrides
+ps3recomp v0.5.1+ folds many former post-lift fix-ups into the lifter
+itself: bctr/bctrl emit ps3_indirect_call directly, the prelude uses
+_mul128/_umul128 on MSVC instead of __int128, and DRAIN_TRAMPOLINE is
+auto-inserted after every direct call.
+
+What this script does NOW:
+  1. Patch ppu_recomp.h to include recomp_bridge.h (TJ's bridge has the
+     vm_read/write helpers, ppu_context, etc.)
+  2. Replace stack-based TOC restores with the constant TOC (TJ-only
+     optimization since we ship a single module)
+  3. Remove CRT functions overridden in ppu_stubs.c
+  4. Rename ppu_recomp.c to ppu_recomp.cpp (the new lifter emits
+     unconditional `extern "C"` in the source preamble)
+  5. Generate dispatch_table.c and ppu_stubs.c
 
 Usage: python scripts/gen_stubs.py [--toc 0x00359220]
 """
+import os
 import re
-import sys
 import argparse
 
 TOC_VALUE = 0x00359220
 
-# Functions overridden in ppu_stubs.c (removed from ppu_recomp.c)
+# Functions overridden in ppu_stubs.c (removed from ppu_recomp.cpp)
 CRT_OVERRIDES = [
     'func_00010230',  # _start
     'func_0025FC00',  # __sys_initialize
@@ -36,86 +41,151 @@ CRT_OVERRIDES = [
 ]
 
 
-def patch_header():
-    """Replace lifter's ppu_context definition with recomp_bridge.h include."""
-    with open('generated/ppu_recomp.h', 'r') as f:
-        content = f.read()
+def regen_header(src_path):
+    """Regenerate ppu_recomp.h from scratch.
 
-    m = re.search(r'^void func_', content, re.MULTILINE)
-    if not m:
-        print("ERROR: No function declarations found in ppu_recomp.h")
-        return
-    func_decls = content[m.start():]
-    content = '/* Patched header */\n#pragma once\n#include "recomp_bridge.h"\n\n' + func_decls
+    The new lifter only declares functions that have bodies it emitted, but
+    its trampoline emit references many addresses (mid-fragment entries) it
+    never wrapped. We scan the .cpp directly for every `func_*` symbol used
+    and declare them all, so the missing ones can be defined in
+    missing_stubs.cpp.
+
+    Idempotent.
+    """
+    with open(src_path, 'r') as f:
+        cpp = f.read()
+    referenced = set(re.findall(r'\b(func_[0-9A-Fa-f]+)\b', cpp))
+    referenced |= set(CRT_OVERRIDES)
+
+    decls = '\n'.join(f'void {fn}(ppu_context* ctx);'
+                      for fn in sorted(referenced))
+
+    content = ('/* Patched header */\n'
+               '#pragma once\n'
+               '#include "recomp_bridge.h"\n\n'
+               '#ifdef __cplusplus\n'
+               'extern "C" {\n'
+               '#endif\n\n'
+               + decls
+               + '\n\n#ifdef __cplusplus\n'
+               '}\n'
+               '#endif\n')
 
     with open('generated/ppu_recomp.h', 'w') as f:
         f.write(content)
-    print(f"  Patched ppu_recomp.h ({func_decls.count(chr(10))} declarations)")
+    print(f"  Regenerated ppu_recomp.h ({len(referenced)} declarations)")
 
 
-def patch_recomp():
-    """Apply all fixes to ppu_recomp.c."""
-    print("Reading ppu_recomp.c...")
-    with open('generated/ppu_recomp.c', 'r') as f:
+def rename_source_to_cpp():
+    """Rename ppu_recomp.c -> ppu_recomp.cpp.
+
+    The new lifter emits unconditional `extern "C"` in the source preamble,
+    which only parses as C++. Renaming forces MSVC/Clang to compile as C++.
+    """
+    src_c = 'generated/ppu_recomp.c'
+    src_cpp = 'generated/ppu_recomp.cpp'
+    if os.path.isfile(src_c):
+        if os.path.isfile(src_cpp):
+            os.remove(src_cpp)
+        os.rename(src_c, src_cpp)
+        print(f"  Renamed ppu_recomp.c -> ppu_recomp.cpp")
+        return src_cpp
+    if os.path.isfile(src_cpp):
+        print(f"  ppu_recomp.cpp already present")
+        return src_cpp
+    raise FileNotFoundError("No ppu_recomp.c or ppu_recomp.cpp in generated/")
+
+
+def patch_recomp(path):
+    """Apply remaining fix-ups to the lifted source."""
+    print(f"Reading {path}...")
+    with open(path, 'r') as f:
         content = f.read()
 
-    # 1. Fix __int128 mulhd patterns (MSVC doesn't support __int128)
-    signed_pattern = (r'\{ __int128 r = \(__int128\)\(int64_t\)(ctx->gpr\[\d+\]) '
-                      r'\* \(__int128\)\(int64_t\)(ctx->gpr\[\d+\]); '
-                      r'(ctx->gpr\[\d+\]) = \(uint64_t\)\(r >> 64\); \}')
-    def signed_replace(m):
-        return f'{{ {m.group(3)} = (uint64_t)ppc_mulhd((int64_t){m.group(1)}, (int64_t){m.group(2)}); }}'
-    content, n1 = re.subn(signed_pattern, signed_replace, content)
+    # 0. Strip the lifter's preamble helpers (__builtin_clz, ppc_mulhd,
+    #    ppc_mulhdu). recomp_bridge.h already provides static-inline
+    #    versions; the lifter's non-static versions cause duplicate-body
+    #    errors and overload ambiguity in MSVC.
+    preamble_pat = (r'/\* MSVC compatibility helpers \*/\n#ifdef _MSC_VER\n'
+                    r'.*?#endif\n')
+    new_content, n_strip = re.subn(preamble_pat,
+                                    '/* MSVC helpers stripped — provided by recomp_bridge.h */\n',
+                                    content, count=1, flags=re.DOTALL)
+    if n_strip:
+        content = new_content
+    print(f"  Stripped {n_strip} lifter preamble helper block(s)")
 
-    unsigned_pattern = (r'\{ unsigned __int128 r = \(unsigned __int128\)(ctx->gpr\[\d+\]) '
-                        r'\* \(unsigned __int128\)(ctx->gpr\[\d+\]); '
-                        r'(ctx->gpr\[\d+\]) = \(uint64_t\)\(r >> 64\); \}')
-    def unsigned_replace(m):
-        return f'{{ {m.group(3)} = ppc_mulhdu({m.group(1)}, {m.group(2)}); }}'
-    content, n2 = re.subn(unsigned_pattern, unsigned_replace, content)
-    print(f"  Fixed {n1} signed + {n2} unsigned __int128 mulhd patterns")
+    # 0b. Body overrides: replace specific lifted bodies that are known to
+    # crash during early game init (vsnprintf varargs, NULL vtable in object
+    # constructors, recursive registration loops). All return CELL_OK.
+    # Restoring these from no-op-return-0 stubs got the old pipeline to the
+    # main-loop-vsync milestone; they need to be re-applied after every
+    # re-lift since the lifter overwrites ppu_recomp.cpp.
+    body_overrides = {
+        'func_001F3D78': 'subsystem registration loop (vsnprintf crash in ctors)',
+        'func_0023D1FC': 'memory pool init (NULL fn ptr in allocator vtable)',
+        'func_00245AC0': 'sprintf dispatcher (vsnprintf varargs crash)',
+        # Wait-for-state polls — busy-loop on sys_timer_usleep + memory read
+        # waiting for an LV2 object state field to flip. Without a real LV2
+        # kernel updating the field, the loop never exits; short-circuit to
+        # success.
+        'func_001F8C4C': 'lv2 wait-for-state spin (sys_timer_usleep + poll)',
+    }
+    n_overridden = 0
+    n_already = 0
+    for fn, why in body_overrides.items():
+        # Idempotency: skip if the function is already a single-line override.
+        # Otherwise the multi-line regex (which only terminates on `\n}\n`)
+        # would extend past the one-liner and eat the next function body.
+        if re.search(r'^void ' + fn + r'\(.*OVERRIDE:.*\}$',
+                     content, re.MULTILINE):
+            n_already += 1
+            continue
+        pattern = r'^void ' + fn + r'\(ppu_context\* ctx\) \{.*?\n\}\n'
+        replacement = (f'void {fn}(ppu_context* ctx) {{ '
+                       f'/* OVERRIDE: {why} */ '
+                       f'ctx->gpr[3] = 0; }}\n')
+        new_content, n = re.subn(pattern, replacement, content,
+                                  count=1, flags=re.MULTILINE | re.DOTALL)
+        if n:
+            content = new_content
+            n_overridden += 1
+    print(f"  Applied {n_overridden}/{len(body_overrides)} body overrides "
+          f"({n_already} already overridden)")
 
-    # 2. Replace stack-based TOC restores with constant TOC
+    # 1. Replace stack-based TOC restores with constant TOC. TJ ships a
+    #    single module, so r2 is invariant across calls and the lifter's
+    #    `ld r2,0x28(r1)` reads can short-circuit to the known value.
     old_toc = 'ctx->gpr[2] = vm_read64(ctx->gpr[1] + 0x28);'
-    new_toc = f'ctx->gpr[2] = 0x{TOC_VALUE:08X}; /* TOC restore (constant for single-module recomp) */'
-    n3 = content.count(old_toc)
+    new_toc = (f'ctx->gpr[2] = 0x{TOC_VALUE:08X}; '
+               '/* TOC restore (constant for single-module recomp) */')
+    n_toc = content.count(old_toc)
     content = content.replace(old_toc, new_toc)
-    print(f"  Replaced {n3} TOC restores with constant 0x{TOC_VALUE:08X}")
+    print(f"  Replaced {n_toc} TOC restores with constant 0x{TOC_VALUE:08X}")
 
-    # 3. Fix bctr tail calls
-    old_bctr = '/* bctr -- indirect branch via CTR */;'
-    new_bctr = 'ppc_indirect_call(ctx); return; /* bctr */'
-    n4 = content.count(old_bctr)
-    content = content.replace(old_bctr, new_bctr)
-    print(f"  Fixed {n4} bctr tail calls")
-
-    # 4. Fix bctrl indirect calls
-    old_bctrl = '((void(*)(ppu_context*))ctx->ctr)(ctx);'
-    new_bctrl = 'ppc_indirect_call(ctx);'
-    n5 = content.count(old_bctrl)
-    content = content.replace(old_bctrl, new_bctrl)
-    print(f"  Fixed {n5} bctrl indirect calls")
-
-    # 5. Remove CRT override functions
+    # 2. Remove CRT override functions (defined in ppu_stubs.c instead)
     removed = 0
     for func_name in CRT_OVERRIDES:
         pattern = r'^void ' + func_name + r'\(ppu_context\* ctx\) \{.*?\n\}\n'
         match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
         if match:
-            content = content[:match.start()] + f'/* {func_name} removed — overridden in ppu_stubs.c */\n' + content[match.end():]
+            content = (content[:match.start()]
+                       + f'/* {func_name} removed -- overridden in ppu_stubs.c */\n'
+                       + content[match.end():])
             removed += 1
     print(f"  Removed {removed} CRT functions (overridden in ppu_stubs.c)")
 
-    print("Writing ppu_recomp.c...")
-    with open('generated/ppu_recomp.c', 'w') as f:
+    print(f"Writing {path}...")
+    with open(path, 'w') as f:
         f.write(content)
 
 
-def gen_dispatch_table():
-    """Generate dispatch_table.c from the defined + stub functions."""
-    with open('generated/ppu_recomp.c') as f:
+def gen_dispatch_table(src_path):
+    """Generate dispatch_table.c from the defined + called functions."""
+    with open(src_path) as f:
         content = f.read()
-    defined = set(re.findall(r'^void (func_[0-9A-Fa-f]+)\(ppu_context\*', content, re.MULTILINE))
+    defined = set(re.findall(r'^void (func_[0-9A-Fa-f]+)\(ppu_context\*',
+                             content, re.MULTILINE))
     called = set(re.findall(r'\b(func_[0-9A-Fa-f]+)\(ctx\)', content))
 
     # Add CRT overrides (defined in ppu_stubs.c)
@@ -127,7 +197,8 @@ def gen_dispatch_table():
     lines = ['#include "ppu_recomp.h"', '']
 
     # Forward declarations for stub-only functions
-    stubs_only = sorted((called | set(CRT_OVERRIDES)) - (defined - set(CRT_OVERRIDES)))
+    stubs_only = sorted((called | set(CRT_OVERRIDES))
+                        - (defined - set(CRT_OVERRIDES)))
     for f in stubs_only:
         if f not in defined:
             lines.append(f'void {f}(ppu_context* ctx);')
@@ -136,9 +207,9 @@ def gen_dispatch_table():
 
     lines.append(f'const int g_dispatch_table_size = {len(all_funcs)};')
     lines.append(f'const dispatch_entry_t g_dispatch_table[{len(all_funcs)}] = {{')
-    for f in all_funcs:
-        addr = int(f.replace('func_', ''), 16)
-        lines.append(f'    {{ 0x{addr:08X}, {f} }},')
+    for fn in all_funcs:
+        addr = int(fn.replace('func_', ''), 16)
+        lines.append(f'    {{ 0x{addr:08X}, {fn} }},')
     lines.append('};')
 
     with open('generated/dispatch_table.c', 'w') as f:
@@ -146,18 +217,87 @@ def gen_dispatch_table():
     print(f"  Generated dispatch_table.c ({len(all_funcs)} entries)")
 
 
+def gen_missing_stubs(src_path):
+    """Auto-generate empty stubs for trampoline targets the lifter referenced
+    but never defined.
+
+    The new lifter emits `g_trampoline_fn = (void(*)(void*))func_XXXX;` for
+    cross-fragment branches. `generate_mid_function_entries` creates wrappers
+    for most such targets, but iteration converges before catching all of
+    them — TJ ends up with ~2000 referenced-but-undefined symbols.
+
+    These addresses live inside other function bodies, so a precise stub
+    would `ctx->cia = ADDR; ps3_indirect_call(ctx);` to bounce back through
+    the dispatcher (which runs the surrounding lifted function from the
+    closest entry). For now, we emit logging no-ops — most are on cold
+    paths and won't fire; we can promote specific ones to real bridges as
+    crashes surface.
+    """
+    import re as _re
+    with open(src_path, 'r') as f:
+        cpp = f.read()
+    with open('generated/ppu_recomp.h', 'r') as f:
+        hdr = f.read()
+
+    defined = set(_re.findall(r'^void (func_[0-9A-Fa-f]+)\(ppu_context\*',
+                              cpp, _re.MULTILINE))
+    declared = set(_re.findall(r'\bvoid (func_[0-9A-Fa-f]+)\(ppu_context\*',
+                               hdr))
+    referenced = set(_re.findall(r'\b(func_[0-9A-Fa-f]+)\b', cpp))
+
+    # CRT overrides are defined in ppu_stubs.c — count as defined
+    for fn in CRT_OVERRIDES:
+        defined.add(fn)
+
+    missing = sorted(referenced - defined)
+    needs_decl = sorted(referenced - declared)
+
+    lines = ['/* Auto-generated stubs for trampoline targets the lifter',
+             ' * referenced but never defined. Most are mid-fragment',
+             ' * entries on cold paths. Logging stub fires once per name. */',
+             '#include "ppu_recomp.h"',
+             '#include <stdio.h>',
+             '',
+             '#ifdef __cplusplus',
+             'extern "C" {',
+             '#endif',
+             '']
+    for fn in needs_decl:
+        if fn not in defined:
+            lines.append(f'void {fn}(ppu_context* ctx);')
+    lines.append('')
+    lines.append('#ifdef __cplusplus')
+    lines.append('}')
+    lines.append('#endif')
+    lines.append('')
+    lines.append('static int g_missing_stub_hits = 0;')
+    lines.append('static void missing_stub_hit(const char* name) {')
+    lines.append('    if (g_missing_stub_hits < 50) {')
+    lines.append('        fprintf(stderr, "[TJ:missing-stub] %s\\n", name);')
+    lines.append('        g_missing_stub_hits++;')
+    lines.append('    }')
+    lines.append('}')
+    lines.append('')
+    for fn in missing:
+        lines.append(f'void {fn}(ppu_context* ctx) {{ (void)ctx; missing_stub_hit("{fn}"); }}')
+
+    with open('generated/missing_stubs.cpp', 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    print(f"  Generated missing_stubs.cpp ({len(missing)} stubs)")
+
+
 def gen_stubs():
     """Generate ppu_stubs.c with manual CRT overrides."""
-    stub_content = r'''/* Manual stubs — functions that need host-side overrides.
- * These are removed from ppu_recomp.c to avoid duplicate symbols.
+    stub_content = r'''/* Manual stubs -- functions that need host-side overrides.
+ * These are removed from ppu_recomp.cpp to avoid duplicate symbols.
  * The real PS3 CRT functions make syscalls and access kernel structures
- * that would hang or crash — we replace them with safe HLE stubs.
+ * that would hang or crash -- we replace them with safe HLE stubs.
  */
 #include "ppu_recomp.h"
 #include <stdio.h>
 
 /* ========================================================================
- * CRT _start — sets up argc/argv/envp then calls __libc_start
+ * CRT _start -- sets up argc/argv/envp then calls __libc_start
  * ====================================================================== */
 void func_00010230(ppu_context* ctx) {
     printf("[CRT] _start (0x00010230)\n");
@@ -191,7 +331,7 @@ void func_00010230(ppu_context* ctx) {
 }
 
 /* ========================================================================
- * CRT init stubs
+ * CRT init stubs -- all return r3=0 to keep CRT off the error path
  * ====================================================================== */
 void func_0025FC00(ppu_context* ctx) {
     printf("[CRT] __sys_initialize(r3=0x%08X, r4=0x%08X, r5=0x%08X)\n",
@@ -201,38 +341,40 @@ void func_0025FC00(ppu_context* ctx) {
 void func_0025FC20(ppu_context* ctx) {
     printf("[CRT] __sys_init_tls(tls_image=0x%08X, tls_size=0x%08X)\n",
            (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4]);
+    ctx->gpr[3] = 0;
 }
 void func_002448EC(ppu_context* ctx) {
-    printf("[CRT] __init_section(r3=0x%08X, r4=0x%08X) — static constructors skipped\n",
+    printf("[CRT] __init_section(r3=0x%08X, r4=0x%08X) -- static constructors skipped\n",
            (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4]);
+    ctx->gpr[3] = 0;
 }
 void func_0025FBC0(ppu_context* ctx) {
-    printf("[CRT] __sys_init_prx() — no PRX loading in static recomp\n");
+    printf("[CRT] __sys_init_prx() -- no PRX loading in static recomp\n");
     ctx->gpr[3] = 0;
 }
 void func_0025FB60(ppu_context* ctx) {
-    printf("[CRT] __sys_init_heap(heap_size=0x%08X) — runtime bump allocator at 0x02000000\n",
+    printf("[CRT] __sys_init_heap(heap_size=0x%08X) -- runtime bump allocator at 0x02000000\n",
            (uint32_t)ctx->gpr[3]);
     ctx->gpr[3] = 0;
 }
 void func_0025FC40(ppu_context* ctx) {
-    printf("[CRT] __sys_init_spu() — no SPU needed yet\n");
+    printf("[CRT] __sys_init_spu() -- no SPU needed yet\n");
     ctx->gpr[3] = 0;
 }
 void func_0024DE14(ppu_context* ctx) {
-    printf("[CRT] func_0024DE14 (stdio init) — skipped\n");
+    printf("[CRT] func_0024DE14 (stdio init) -- skipped\n");
     ctx->gpr[3] = 0;
 }
 void func_00249298(ppu_context* ctx) {
-    printf("[CRT] func_00249298 (memory region init) — skipped\n");
+    printf("[CRT] func_00249298 (memory region init) -- skipped\n");
     ctx->gpr[3] = 0;
 }
 void func_00248C8C(ppu_context* ctx) {
-    printf("[CRT] func_00248C8C (exception init) — skipped\n");
+    printf("[CRT] func_00248C8C (exception init) -- skipped\n");
     ctx->gpr[3] = 0;
 }
 void func_00010200(ppu_context* ctx) {
-    printf("[CRT] __crt_atexit — skipped\n");
+    printf("[CRT] __crt_atexit -- skipped\n");
     ctx->gpr[3] = 0;
 }
 '''
@@ -244,24 +386,31 @@ void func_00010200(ppu_context* ctx) {
 def main():
     global TOC_VALUE
     parser = argparse.ArgumentParser(description='Post-lift processing for Tokyo Jungle')
-    parser.add_argument('--toc', default=f'0x{TOC_VALUE:08X}', help='TOC value (default: 0x00359220)')
+    parser.add_argument('--toc', default=f'0x{TOC_VALUE:08X}',
+                        help='TOC value (default: 0x00359220)')
     args = parser.parse_args()
 
     TOC_VALUE = int(args.toc, 16)
 
     print("=== Tokyo Jungle Post-Lift Processing ===\n")
 
-    print("[1/5] Patching header...")
-    patch_header()
+    print("[1/6] Renaming source to .cpp...")
+    src_path = rename_source_to_cpp()
 
-    print("[2/5] Patching ppu_recomp.c...")
-    patch_recomp()
+    print("[2/6] Patching ppu_recomp.cpp...")
+    patch_recomp(src_path)
 
-    print("[3/5] Generating dispatch table...")
-    gen_dispatch_table()
+    print("[3/6] Regenerating header...")
+    regen_header(src_path)
 
-    print("[4/5] Generating stubs...")
+    print("[4/6] Generating dispatch table...")
+    gen_dispatch_table(src_path)
+
+    print("[5/6] Generating stubs...")
     gen_stubs()
+
+    print("[6/6] Generating missing-symbol stubs...")
+    gen_missing_stubs(src_path)
 
     print("\n=== Done! Run: cmake --build build --config Release ===")
 

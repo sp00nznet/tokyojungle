@@ -99,7 +99,7 @@ def check_prerequisites() -> bool:
 def main():
     parser = argparse.ArgumentParser(description="Tokyo Jungle binary analysis pipeline")
     parser.add_argument("--tools-dir", type=Path, help="Path to ps3recomp tools/ directory")
-    parser.add_argument("--skip-to", choices=["parse", "nid", "functions", "disasm", "lift"],
+    parser.add_argument("--skip-to", choices=["functions", "lift"],
                         help="Skip to a specific pipeline stage")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without executing")
     args = parser.parse_args()
@@ -121,31 +121,20 @@ def main():
     elf = str(INPUT_DIR / "EBOOT.ELF")
     output = str(OUTPUT_DIR)
 
+    # The upstream lifter (v0.5.1+) folds ELF parsing, NID resolution and
+    # disassembly into the lifter itself; we only need find_functions then
+    # ppu_lifter. Older multi-phase analyze flow has been retired.
     stages = [
-        ("parse", "elf_parser.py",
-         [elf, "--output", output, "--verbose"],
-         "Phase 1: Parsing ELF structure (segments, imports, exports)"),
-
-        ("nid", "nid_database.py",
-         [elf, "--resolve", "--output", f"{output}/nid_report.json"],
-         "Phase 2: Resolving NID imports against database"),
-
         ("functions", "find_functions.py",
-         [elf, "--output", f"{output}/functions.json", "--aggressive"],
-         "Phase 3: Discovering function boundaries"),
-
-        ("disasm", "ppu_disasm.py",
-         [elf, "--functions", f"{output}/functions.json",
-          "--output", f"{output}/disasm/", "--verbose"],
-         "Phase 4: Disassembling PPU code"),
+         [elf, "--output", f"{output}/functions.json"],
+         "Phase 1: Discovering function boundaries"),
 
         ("lift", "ppu_lifter.py",
          [elf, "--functions", f"{output}/functions.json",
-          "--disasm", f"{output}/disasm/",
-          "--output", f"{output}/",
-          "--prefix", "tj_",
-          "--config", str(CONFIG_FILE)],
-         "Phase 5: Lifting to C source code"),
+          "--output", output,
+          "--header-name", "ppu_recomp.h",
+          "--source-name", "ppu_recomp.c"],
+         "Phase 2: Lifting PPU to C++"),
     ]
 
     # Skip stages if requested

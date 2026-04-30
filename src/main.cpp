@@ -20,13 +20,12 @@
 #include "ps3emu/module.h"
 #include "ps3emu/nid.h"
 
-// ps3recomp runtime internals (C linkage)
-extern "C" {
+// ps3recomp runtime internals — these headers are template-aware and
+// guard their own C linkage where needed; do not wrap them in extern "C".
 #include "ppu_context.h"
 #include "vm.h"
 #include "lv2_syscall_table.h"
 #include "recomp_bridge.h"
-}
 
 // vm_base definition (declared extern in vm.h)
 uint8_t* vm_base = nullptr;
@@ -68,6 +67,10 @@ static recomp_func_t dispatch_lookup(uint32_t guest_addr) {
 namespace tj_stubs {
     void register_overrides();
 }
+
+// Guest callback dispatch hook installer (defined in dispatch_glue.cpp)
+extern "C" void tj_install_guest_caller(void);
+extern "C" void tj_install_watchdog(ppu_context* ctx);
 
 // Main PPU context
 static ppu_context g_main_ctx;
@@ -153,6 +156,13 @@ int main(int argc, char* argv[])
 
     // 4. Register stubs
     tj_stubs::register_overrides();
+
+    // 4b. Install guest_caller hook so HLE bridges (cellSysutilCheckCallback,
+    // cellGcm vblank/flip handlers, save-data completion) can dispatch back
+    // into recompiled guest code. Without this the main loop hangs on
+    // vsync/flip and sysutil never fires events.
+    tj_install_guest_caller();
+    tj_install_watchdog(&g_main_ctx);
 
     // 5. Dispatch table info
     printf("[TJ] Dispatch table: %d functions\n", g_dispatch_table_size);

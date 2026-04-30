@@ -14,9 +14,7 @@
 #include "ps3emu/module.h"
 #include "ps3emu/nid.h"
 
-extern "C" {
 #include "ppu_context.h"
-}
 
 // Inline memory access for stubs (avoid C11 _Atomic issues)
 extern "C" uint8_t* vm_base;
