@@ -583,6 +583,16 @@ static void hle_generic_named(ppu_context* ctx) {
     uint32_t slot = g_generic_slot[idx];
     uint32_t nid  = tj_import_nid(slot);
 
+    /* TJ_IMPTRACE=1: log every routed import, not just the first of each --
+     * the only way to see which call was in flight when a fault happened
+     * inside an HLE implementation. */
+    static int trace = -1;
+    if (trace < 0) trace = getenv("TJ_IMPTRACE") ? 1 : 0;
+    if (trace)
+        printf("[imp] %s slot=0x%08X r3=0x%08X r4=0x%08X r5=0x%08X\n",
+               tj_import_name(slot), slot, (uint32_t)ctx->gpr[3],
+               (uint32_t)ctx->gpr[4], (uint32_t)ctx->gpr[5]);
+
     if (nid && ps3_hle_has(nid)) {
         if (!seen[idx]) {
             seen[idx] = 1;

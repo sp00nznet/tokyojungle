@@ -61,6 +61,7 @@ add_executable(tokyojungle
     src/stubs.cpp
     src/dispatch_glue.cpp
     src/tj_crt_overrides.cpp
+    src/tj_present.cpp
     src/gen/ppu_hle_nids.cpp   # generated: NID -> ps3recomp lib handler
     ${PS3RECOMP_PPU_SOURCES}
     ${GENERATED_SOURCES}
@@ -92,6 +93,12 @@ if(WIN32)
         xinput
         ole32
         bcrypt
+        # The D3D12 RSX backend is linked now that src/tj_present.cpp drives
+        # it; dxguid supplies IID_ID3D12Device / IID_IDXGIAdapter1.
+        d3d12
+        dxgi
+        dxguid
+        d3dcompiler
     )
 else()
     target_link_libraries(tokyojungle PRIVATE

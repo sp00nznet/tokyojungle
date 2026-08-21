@@ -80,6 +80,7 @@ extern "C" void ppu_register_function(uint64_t, void (*)(ppu_context*));
 extern "C" void ppu_hle_register_all(void);
 extern "C" void ppu_sysprx_register(void);
 extern "C" int  tj_crash_filter(unsigned long code);
+extern "C" void tj_start_present_thread(void);
 extern "C" unsigned int ps3_hle_count(void);
 extern "C" void ppu_recomp_register(void);
 
@@ -262,6 +263,8 @@ int main(int argc, char* argv[])
     }
 
     if (entry_func) {
+    tj_start_present_thread();
+
         printf("[TJ] Executing 0x%08X...\n\n", entry_addr);
         g_main_ctx.gpr[3] = 0; // argc
 
