@@ -44,10 +44,23 @@ endif()
 # =============================================================================
 # Game executable
 # =============================================================================
+# The runtime library no longer bundles the PPU loader/HLE/VFS translation
+# units -- current ps3recomp expects each title to compile them, so the game
+# can supply its own function_table and boot harness. Tokyo Jungle was built
+# against a runtime that still bundled them, which is why linking against the
+# current one left ppu_vm_size, vm_read32, ppu_resv_* and friends unresolved.
+set(PS3RECOMP_PPU_SOURCES
+    "${PS3RECOMP_DIR}/runtime/ppu/ppu_loader.cpp"   # vm + ELF loader + run
+    "${PS3RECOMP_DIR}/runtime/ppu/ppu_hle.cpp"      # NID -> handler dispatch
+    "${PS3RECOMP_DIR}/runtime/ppu/ppu_sysprx.cpp"   # boot-critical CRT
+    "${PS3RECOMP_DIR}/runtime/ppu/ppu_fs.cpp"       # cellFs VFS
+)
+
 add_executable(tokyojungle
     src/main.cpp
     src/stubs.cpp
     src/dispatch_glue.cpp
+    ${PS3RECOMP_PPU_SOURCES}
     ${GENERATED_SOURCES}
 )
 

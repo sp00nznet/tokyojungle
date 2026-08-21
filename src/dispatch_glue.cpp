@@ -72,9 +72,15 @@ extern "C" {
 ps3_guest_caller_fn g_ps3_guest_caller;  /* declared in ps3emu/guest_call.h */
 }
 
+/* ps3_guest_caller_fn widened from four args to eight (r3..r10) in ps3recomp;
+ * this glue predated that. Take all eight and place them, so a callback that
+ * reads past r6 gets the real value instead of whatever was left in the
+ * register. */
 static void tj_guest_caller(uint32_t opd_addr,
                             uint64_t a0, uint64_t a1,
-                            uint64_t a2, uint64_t a3)
+                            uint64_t a2, uint64_t a3,
+                            uint64_t a4, uint64_t a5,
+                            uint64_t a6, uint64_t a7)
 {
     if (!opd_addr) return;
 
@@ -96,6 +102,10 @@ static void tj_guest_caller(uint32_t opd_addr,
     cb_ctx.gpr[4] = a1;
     cb_ctx.gpr[5] = a2;
     cb_ctx.gpr[6] = a3;
+    cb_ctx.gpr[7] = a4;
+    cb_ctx.gpr[8] = a5;
+    cb_ctx.gpr[9] = a6;
+    cb_ctx.gpr[10] = a7;
     cb_ctx.lr     = 0; /* return-to-zero sentinel */
     cb_ctx.ctr    = func;
 

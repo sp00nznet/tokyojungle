@@ -112,8 +112,11 @@ static inline uint64_t ppc_mulhdu(uint64_t a, uint64_t b) {
 /*
  * GCC built-in shims for MSVC.
  * The lifter generates __builtin_clz for cntlzw instructions.
+ *
+ * clang-cl also defines _MSC_VER, but there these ARE real builtins and
+ * redefining them is an error -- so gate on "MSVC and not clang".
  */
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
 static inline int __builtin_clz(unsigned int x) {
     unsigned long idx;
