@@ -555,6 +555,33 @@ static void hle_game_content_permit(ppu_context* ctx) {
  * Registration — call this after import table population
  * ====================================================================== */
 
+/* One no-op handler shared by every import the ELF left unresolved. Each such
+ * import has its OWN guest address (TJ_GENERIC_ADDR), so ctx->ctr identifies
+ * which slot the guest called even though the body is the same. Reports each
+ * distinct import once, with the arguments -- that list is the roadmap of what
+ * still needs a real implementation. */
+static void hle_generic_named(ppu_context* ctx) {
+    static unsigned char seen[TJ_GENERIC_MAX];
+    uint32_t idx = ((uint32_t)ctx->ctr - TJ_GENERIC_BASE) / 4u;
+    if (idx < TJ_GENERIC_MAX && !seen[idx]) {
+        seen[idx] = 1;
+        printf("[import] UNIMPLEMENTED slot=0x%08X  r3=0x%08X r4=0x%08X "
+               "r5=0x%08X r6=0x%08X\n",
+               g_generic_slot[idx], (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
+               (uint32_t)ctx->gpr[5], (uint32_t)ctx->gpr[6]);
+    }
+    ctx->gpr[3] = 0;
+}
+
+/* Register the per-slot generic addresses. Called after resolve_all_imports,
+ * which is what fills g_generic_slot/g_generic_count. */
+static void register_generic_imports(void) {
+    for (int i = 0; i < g_generic_count; i++)
+        hle_register(TJ_GENERIC_ADDR(i), hle_generic_named);
+    printf("[HLE] Registered %d per-slot generic import stubs\n",
+           g_generic_count);
+}
+
 static void register_hle_imports(uint32_t toc) {
     printf("[HLE] Registering HLE import handlers...\n");
 
@@ -567,8 +594,17 @@ static void register_hle_imports(uint32_t toc) {
     resolve_import(0x342818, HLE_ADDR_LWMUTEX_UNLOCK, toc);
     hle_register(HLE_ADDR_LWMUTEX_UNLOCK, hle_lwmutex_unlock);
 
-    // NID 0x24A1EA07 = sys_ppu_thread_create, stub=0x342820
-    resolve_import(0x342820, HLE_ADDR_THREAD_CREATE, toc);
+    // Slot 0x342820 is sys_lwmutex_create, NOT sys_ppu_thread_create. The
+    // caller is the libc heap init (func_0024DB0C), and its r4 points at
+    // 0x0028E630 = { protocol=2, recursive=0x10, name="_lc_mtx" } -- a
+    // sys_lwmutex_attribute_t, immediately followed by the string
+    // "mspace_free". It is called once per dlmalloc mspace.
+    //
+    // The old slot->name comments in this file and in import_resolver.h were
+    // written assuming an 8-byte import stride; the table is 4-byte (see
+    // import_resolver.h), so every name in those lists may be off. Trust the
+    // stub disassembly and the call-site arguments, not the comments.
+    resolve_import(0x342820, HLE_ADDR_LWMUTEX_CREATE, toc);
     hle_register(HLE_ADDR_THREAD_CREATE, hle_thread_create);
 
     // NID 0x2C847572 = _sys_process_atexitspawn, stub=0x342828

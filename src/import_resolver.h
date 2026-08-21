@@ -129,6 +129,17 @@ static uint32_t create_opd(uint32_t code_addr, uint32_t toc) {
  * code_addr: guest address of the HLE function (must be in dispatch table)
  * toc: TOC value (0x00359220 for this binary)
  */
+/* Per-slot HLE addresses for imports the ELF left unresolved. Each gets a
+ * distinct guest address so the log names the import instead of showing an
+ * anonymous shared stub. TJ_GENERIC_BASE sits inside the HLE range
+ * (0x01100000-0x011FFFFF) well clear of the hand-assigned HLE_ADDR(n). */
+#define TJ_GENERIC_MAX   512
+#define TJ_GENERIC_BASE  0x01180000u
+#define TJ_GENERIC_ADDR(n) (TJ_GENERIC_BASE + (n) * 4u)
+
+static uint32_t g_generic_slot[TJ_GENERIC_MAX];
+static int      g_generic_count;
+
 static void resolve_import(uint32_t import_slot, uint32_t code_addr, uint32_t toc) {
     uint32_t opd_addr = create_opd(code_addr, toc);
     import_write32(import_slot, opd_addr);
@@ -275,10 +286,21 @@ static void resolve_all_imports(uint32_t toc) {
         bool unresolved = (current == 0) ||
                           (current >= 0x00010000u && current < 0x00340000u);
         if (unresolved) {
-            resolve_import(slot, HLE_STUB_RETURN_OK, toc);
+            // Give each generically-resolved slot its OWN HLE address rather
+            // than sharing HLE_STUB_RETURN_OK. The handler is the same no-op,
+            // but the address identifies WHICH import the guest just called --
+            // otherwise every unimplemented library call looks alike in the
+            // log and there is no way to tell which one mattered.
+            if (generic < TJ_GENERIC_MAX) {
+                g_generic_slot[generic] = slot;
+                resolve_import(slot, TJ_GENERIC_ADDR(generic), toc);
+            } else {
+                resolve_import(slot, HLE_STUB_RETURN_OK, toc);
+            }
             generic++;
         }
     }
+    g_generic_count = generic < TJ_GENERIC_MAX ? generic : TJ_GENERIC_MAX;
     printf("[HLE] %d import slots left unresolved by the ELF -> generic stub\n",
            generic);
 

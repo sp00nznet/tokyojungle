@@ -133,6 +133,7 @@ int main(int argc, char* argv[])
 
     // 2c. Register HLE import handlers for critical functions
     register_hle_imports(elf.toc);
+    register_generic_imports();
 
     // 2d. Mirror them into the runtime's dispatch table. Indirect calls now go
     // through ps3recomp's ps3_indirect_call (ppu_loader.cpp), which resolves via
