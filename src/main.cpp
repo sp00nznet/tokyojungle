@@ -83,6 +83,9 @@ extern "C" int  tj_crash_filter(unsigned long code);
 extern "C" void tj_start_present_thread(void);
 extern "C" unsigned int ps3_hle_count(void);
 extern "C" void ppu_recomp_register(void);
+extern "C" void ppu_install_thread_trampoline(void);
+extern "C" void cellfs_set_root_path(const char* root);
+extern "C" void cellfs_add_path_mapping(const char* ps3_prefix, const char* host_path);
 
 int main(int argc, char* argv[])
 {
@@ -127,6 +130,28 @@ int main(int argc, char* argv[])
     // build where a guest callback -- the GCM flip handler -- actually fires.
     vm_commit(0xCFF00000u, 0x00100000u);
     printf("[TJ] Guest-callback stacks committed (0xCFF00000, 1MB)\n");
+
+    // 1b4. cellFs path mappings.
+    //
+    // There are two filesystems in play: the sys_fs SYSCALL layer (ppu_fs.cpp,
+    // driven by PS3_VFS_ROOT) and the cellFs HLE layer (libs/filesystem, with
+    // its own prefix table). Only the first was configured, so when the
+    // installer called cellFsOpendir it asked for
+    //
+    //   /dev_bdvd/PS3_GAME/USRDIR/data
+    //
+    // which mapped to <root>/gamedata/dev_bdvd/PS3_GAME/USRDIR/data -- not
+    // where this title's data actually lives. Map the disc and hdd game roots
+    // onto USRDIR/ under the same VFS root the syscall layer uses.
+    {
+        const char* vfs = getenv("PS3_VFS_ROOT");
+        if (!vfs || !*vfs) vfs = ".";
+        cellfs_set_root_path(vfs);
+        cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/USRDIR/", "USRDIR/");
+        cellfs_add_path_mapping("/dev_hdd0/game/NPUA80523/USRDIR/", "USRDIR/");
+        cellfs_add_path_mapping("/app_home/", "");
+        printf("[TJ] cellFs root=\"%s\" (disc + hdd game dirs -> USRDIR/)\n", vfs);
+    }
 
     // 1c. Initialize LV2 syscall dispatch table
     lv2_register_all_syscalls(&g_lv2_syscalls);
@@ -181,6 +206,12 @@ int main(int argc, char* argv[])
     // and every import call reports "unresolved indirect call".
     {
         ppu_recomp_register();        /* the lifted function table */
+        /* Without this every sys_ppu_thread_create'd thread spawns and
+         * exits immediately without running a single guest instruction:
+         * ppu_run() normally installs the trampoline, and TJ dispatches
+         * the guest entry itself. The threads report FINISHED, so it
+         * looks fine -- the game just never gets what they were for. */
+        ppu_install_thread_trampoline();
         for (int i = 0; i < g_hle_dispatch_count; i++)
             ppu_register_function(g_hle_dispatch[i].guest_addr,
                                   g_hle_dispatch[i].handler);
@@ -287,7 +318,37 @@ int main(int argc, char* argv[])
     tj_start_present_thread();
 
         printf("[TJ] Executing 0x%08X...\n\n", entry_addr);
-        g_main_ctx.gpr[3] = 0; // argc
+        /* PS3 _start ABI: r3 = argc, r4 = argv, r5 = envp. This was argc=0
+         * with no argv at all, and the game noticed -- its own startup log
+         * prints "main %s" and it came out as "main (null)". A PS3 title
+         * derives its data directory from argv[0] (the EBOOT path), so with
+         * none it never built a content path, never opened a file, and ran an
+         * empty frame loop forever: flipping at 60 Hz with nothing to draw.
+         *
+         * /app_home is the prefix ppu_fs.cpp strips before appending the rest
+         * to PS3_VFS_ROOT, so /app_home/USRDIR/... lands on input/USRDIR/...,
+         * which is where this title's data/ actually is. */
+        {
+            const uint32_t ARGV_BASE = 0x00F00000u;
+            const char* argv0 = getenv("PS3_ARGV0");
+            if (!argv0 || !*argv0) argv0 = "/app_home/USRDIR/EBOOT.BIN";
+
+            vm_commit(ARGV_BASE, 0x10000u);
+            memset(vm_base + ARGV_BASE, 0, 0x10000u);
+
+            uint32_t str_ea = ARGV_BASE + 0x100;
+            strcpy((char*)(vm_base + str_ea), argv0);
+            vm_write32(ARGV_BASE + 0, str_ea);   /* argv[0]            */
+            vm_write32(ARGV_BASE + 4, 0);        /* argv[1] = NULL     */
+
+            uint32_t envp_ea = ARGV_BASE + 0x200;
+            vm_write32(envp_ea, 0);              /* envp[0] = NULL     */
+
+            g_main_ctx.gpr[3] = 1;               /* argc               */
+            g_main_ctx.gpr[4] = ARGV_BASE;       /* argv               */
+            g_main_ctx.gpr[5] = envp_ea;         /* envp               */
+            printf("[TJ] argv[0] = \"%s\"\n", argv0);
+        }
 
 #ifdef _WIN32
         // Structured exception handling for crash debugging

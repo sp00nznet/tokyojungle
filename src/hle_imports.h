@@ -614,48 +614,62 @@ static void hle_generic_named(ppu_context* ctx) {
     ctx->gpr[3] = 0;
 }
 
-/* Hand the graphics libraries to ps3recomp.
+/* Prefer ps3recomp's implementation for every import it actually has.
  *
- * TJ's own cellGcm* handlers are bring-up stubs: they record a little state
- * and return 0, and nothing downstream of them draws. ps3recomp's
- * libs/video/cellGcmSys.c is the implementation wired to the RSX command
- * translator and the D3D12 backend that renders Rubber Ducky, and its
- * cellResc sits on top of that same state -- which is why cellRescInit
- * faults when it runs against TJ's stub GCM instead.
+ * TJ's own handlers are bring-up stubs written before the runtime had real
+ * libraries: they record a little state and return 0. That is why the boot
+ * kept dying on things ps3recomp already implements. The graphics set was
+ * moved over first; keeping the rest on stubs then blocked the frame loop,
+ * because sys_ppu_thread_create was a "stubbed (single-threaded)" no-op --
+ * the game's render thread never existed, so nothing drained the event queue
+ * the flip handler posts to, and it filled up and stayed full:
  *
- * So for these modules, prefer ps3recomp wherever it has the NID: rebind the
- * slot to a per-slot generic address, which routes through ps3_hle_call.
- * Runs after register_hle_imports so it overrides TJ's bindings.
+ *   [evt] port_send(port=1): queue 1 FULL -> EBUSY
  *
- * TJ_LEGACY_GCM=1 keeps TJ's stubs, for bisecting a regression against them.
+ * So the default is now: if ps3_hle_has(nid), route there. TJ's handler
+ * remains the fallback for the NIDs ps3recomp does not implement.
+ *
+ * TJ_KEEP is a comma-separated list of import names to keep on TJ's handler
+ * (e.g. TJ_KEEP=cellPadGetData,cellAudioPortOpen) for bisecting a regression.
+ * TJ_LEGACY_HLE=1 keeps everything on TJ's handlers, as before.
  */
+static int tj_keep_on_tj(const char* name) {
+    const char* keep = getenv("TJ_KEEP");
+    if (!keep || !*keep) return 0;
+    size_t n = strlen(name);
+    for (const char* p = keep; *p; ) {
+        const char* c = strchr(p, ',');
+        size_t len = c ? (size_t)(c - p) : strlen(p);
+        if (len == n && strncmp(p, name, n) == 0) return 1;
+        if (!c) break;
+        p = c + 1;
+    }
+    return 0;
+}
+
 static void prefer_ps3recomp_graphics(uint32_t toc) {
-    if (getenv("TJ_LEGACY_GCM")) {
-        printf("[HLE] TJ_LEGACY_GCM: keeping TJ's own graphics stubs\n");
+    if (getenv("TJ_LEGACY_GCM") || getenv("TJ_LEGACY_HLE")) {
+        printf("[HLE] TJ_LEGACY_HLE: keeping TJ's own stubs\n");
         return;
     }
-    static const char* const kPrefixes[] = { "cellGcm", "cellResc", "cellVideoOut" };
-    int moved = 0;
+    int moved = 0, kept = 0;
     for (int i = 0; i < g_tj_import_name_count; i++) {
         const tj_import_entry* e = &g_tj_import_names[i];
-        int want = 0;
-        /* Substring, not prefix: the module's own init is exported as
-         * _cellGcmInitBody with a leading underscore, and matching on a
-         * prefix left it on TJ's stub -- so ps3recomp's GCM was never
-         * initialised, there was no FIFO or control register, and the game
-         * spun forever in its flip loop waiting for a present. */
-        for (unsigned p = 0; p < sizeof(kPrefixes) / sizeof(kPrefixes[0]); p++) {
-            if (strstr(e->name, kPrefixes[p]) != 0) { want = 1; break; }
+        if (!ps3_hle_has(e->nid)) continue;
+        if (tj_keep_on_tj(e->name)) { kept++; continue; }
+        if (g_generic_count >= TJ_GENERIC_MAX) {
+            printf("[HLE] WARNING: generic import table full at %d -- "
+                   "the rest stay on TJ's handlers\n", g_generic_count);
+            break;
         }
-        if (!want || !ps3_hle_has(e->nid)) continue;
-        if (g_generic_count >= TJ_GENERIC_MAX) break;
         int idx = g_generic_count++;
         g_generic_slot[idx] = e->slot;
         resolve_import(e->slot, TJ_GENERIC_ADDR(idx), toc);
         hle_register(TJ_GENERIC_ADDR(idx), hle_generic_named);
         moved++;
     }
-    printf("[HLE] %d graphics imports routed to ps3recomp\n", moved);
+    printf("[HLE] %d imports routed to ps3recomp (%d held back by TJ_KEEP)\n",
+           moved, kept);
 }
 
 /* Register the per-slot generic addresses. Called after resolve_all_imports,

@@ -22,6 +22,36 @@
 #include <stdlib.h>
 #include <windows.h>
 
+#include "ppu_context.h"
+#include "sys_ppu_thread.h"
+
+/* TJ_THREADS=1: every 2 s, print each PPU thread's state and the guest address
+ * of its last syscall/HLE call (prof_pc). The watchdog only samples the main
+ * thread, so a worker that finished early or wedged is otherwise invisible --
+ * and "the game runs its frame loop but never loads anything" is exactly the
+ * shape a wedged worker produces. */
+static void tj_dump_threads(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("TJ_THREADS") ? 1 : 0;
+    if (!on) return;
+
+    static ULONGLONG next = 0;
+    ULONGLONG now = GetTickCount64();
+    if (now < next) return;
+    next = now + 2000;
+
+    static const char* kState[] = { "FREE", "RUNNING", "FINISHED", "DETACHED" };
+    fprintf(stderr, "[threads]\n");
+    for (int i = 0; i < PPU_THREAD_MAX; i++) {
+        const ppu_thread_info* t = &g_ppu_threads[i];
+        if (t->state == PPU_THREAD_STATE_FREE) continue;
+        fprintf(stderr, "   tid=%d %-9s entry=0x%08llX prof_pc=0x%08X name=\"%s\"\n",
+                i, kState[t->state & 3],
+                (unsigned long long)t->entry_addr, t->prof_pc, t->name);
+    }
+}
+
 extern "C" {
 int  rsx_d3d12_backend_init(int width, int height, const char* title);
 void rsx_d3d12_backend_present(void);
@@ -63,6 +93,8 @@ static DWORD WINAPI tj_present_thread(LPVOID)
         /* Also drain at the outer cadence: titles fence every render pass on
          * an RSX label the drain writes, and waiting a full 16 ms per fence
          * paces the guest to single-digit fps. */
+        tj_dump_threads();
+
         if (rsx_ok) {
             if (cellGcm_take_flip_pending())
                 rsx_d3d12_backend_present();
