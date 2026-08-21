@@ -629,9 +629,13 @@ static void prefer_ps3recomp_graphics(uint32_t toc) {
     for (int i = 0; i < g_tj_import_name_count; i++) {
         const tj_import_entry* e = &g_tj_import_names[i];
         int want = 0;
+        /* Substring, not prefix: the module's own init is exported as
+         * _cellGcmInitBody with a leading underscore, and matching on a
+         * prefix left it on TJ's stub -- so ps3recomp's GCM was never
+         * initialised, there was no FIFO or control register, and the game
+         * spun forever in its flip loop waiting for a present. */
         for (unsigned p = 0; p < sizeof(kPrefixes) / sizeof(kPrefixes[0]); p++) {
-            size_t n = strlen(kPrefixes[p]);
-            if (strncmp(e->name, kPrefixes[p], n) == 0) { want = 1; break; }
+            if (strstr(e->name, kPrefixes[p]) != 0) { want = 1; break; }
         }
         if (!want || !ps3_hle_has(e->nid)) continue;
         if (g_generic_count >= TJ_GENERIC_MAX) break;

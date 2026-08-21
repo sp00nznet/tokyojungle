@@ -78,6 +78,8 @@ static ppu_context g_main_ctx;
 
 extern "C" void ppu_register_function(uint64_t, void (*)(ppu_context*));
 extern "C" void ppu_hle_register_all(void);
+extern "C" void ppu_sysprx_register(void);
+extern "C" int  tj_crash_filter(unsigned long code);
 extern "C" unsigned int ps3_hle_count(void);
 extern "C" void ppu_recomp_register(void);
 
@@ -137,6 +139,11 @@ int main(int argc, char* argv[])
     // all fall back to a return-0 stub -- including all of cellResc, which is
     // how this game reaches the display.
     ppu_hle_register_all();
+    /* Boot-critical context-aware handlers that live outside the generated
+     * table: _cellGcmInitBody (NID 0x15BAE46B), sys_initialize_tls, ... .
+     * Without this the GCM init stays on TJ's stub, ps3recomp's GCM never
+     * gets a FIFO or control register, and the game spins in its flip loop. */
+    ppu_sysprx_register();
     printf("[HLE] ps3recomp NID registry: %u handlers\n", ps3_hle_count());
 
     resolve_all_imports(elf.toc);
@@ -266,7 +273,7 @@ int main(int argc, char* argv[])
                    (unsigned long long)g_main_ctx.gpr[3]);
         }
         __except(GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
-                 EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+                 tj_crash_filter(GetExceptionCode()) : EXCEPTION_CONTINUE_SEARCH) {
             DWORD code = GetExceptionCode();
             printf("\n[TJ] CRASH! Exception code: 0x%08lX\n", code);
             printf("[TJ] CTR (last indirect target): 0x%08X\n",

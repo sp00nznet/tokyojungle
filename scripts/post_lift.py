@@ -54,6 +54,11 @@ HEAP_PATCHES = {
     "0024DCBC": ("tj_heap_free",     "free (realloc-internal)"),
     "0024DCEC": ("tj_heap_memalign", "memalign"),
     "0024DD24": ("tj_heap_realloc",  "realloc"),
+    # Diagnostic, not a heap wrapper: the guest abort() walks its own stack
+    # to print a backtrace and faults doing it when the stack is the thing
+    # that is wrong. See src/tj_crt_overrides.cpp.
+    "0023E380": ("tj_abort",        "abort"),
+    "0025279C": ("tj_pure_virtual", "__cxa_pure_virtual"),
 }
 
 
