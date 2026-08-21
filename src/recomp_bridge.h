@@ -131,41 +131,20 @@ void lv2_syscall(ppu_context* ctx);
  */
 typedef void (*recomp_func_t)(ppu_context* ctx);
 
-/* ps3recomp's ppu_loader.cpp resolves an indirect branch by scanning this
- * table, mapping a host return address back to a guest one. It needs the
- * COMPLETE type (it reads .addr/.func), so the definition lives here rather
- * than in the generated tree -- generated/ppu_recomp.h includes this header,
- * so the lifted code and the loader agree on one type.
- *
- * The lifter emits its own anonymous typedef plus a `static` table, both of
- * which would fight this; scripts/post_lift.py removes the typedef and drops
- * the `static` so the symbol is actually exported. */
-typedef struct func_entry {
-    uint64_t addr;
-    void (*func)(ppu_context*);
-    const char* name;
-} func_entry;
+/* The lifter's function table (generated/ppu_recomp.h, defined in the
+ * generated source). Declared here rather than by including that header,
+ * which defines its own copy of ppu_context and would collide with the
+ * runtime's. Keep the type spelling identical to the generated one. */
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef struct { uint64_t addr; void (*func)(ppu_context*); const char* name; } func_entry;
 extern const func_entry function_table[];
-extern const uint64_t   function_table_count;
+extern const uint64_t   function_table_count;  /* entries, excluding sentinel */
 #ifdef __cplusplus
 }
 #endif
-typedef struct dispatch_entry_t {
-    uint32_t guest_addr;
-    recomp_func_t host_func;
-} dispatch_entry_t;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-extern const dispatch_entry_t g_dispatch_table[];
-extern const int g_dispatch_table_size;
-#ifdef __cplusplus
-}
-#endif
 
 /*
  * Runtime HLE dispatch table — for dynamically registered HLE import handlers.
@@ -194,83 +173,3 @@ static inline void hle_register(uint32_t guest_addr, recomp_func_t handler) {
     }
 }
 
-static inline void ppc_indirect_call(ppu_context* ctx) {
-    uint32_t target = (uint32_t)ctx->ctr;
-
-    /* Null pointer guard */
-    if (target == 0) {
-        printf("[TJ] WARNING: indirect call to NULL (r3=0x%08X r4=0x%08X)\n",
-               (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4]);
-        ctx->gpr[3] = 0;
-        return;
-    }
-
-    /* Check runtime HLE dispatch first (small table, linear scan) */
-    for (int i = 0; i < g_hle_dispatch_count; i++) {
-        if (g_hle_dispatch[i].guest_addr == target) {
-            g_hle_dispatch[i].handler(ctx);
-            return;
-        }
-    }
-
-    /* Binary search the compile-time dispatch table */
-    int lo = 0, hi = g_dispatch_table_size - 1;
-    while (lo <= hi) {
-        int mid = (lo + hi) / 2;
-        if (g_dispatch_table[mid].guest_addr == target) {
-            g_dispatch_table[mid].host_func(ctx);
-            return;
-        } else if (g_dispatch_table[mid].guest_addr < target) {
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
-        }
-    }
-
-    /*
-     * Fallback: if target is in the data segment, it might be a function
-     * descriptor (OPD) address. Read the code address from the OPD and
-     * try dispatching to that instead. This handles vtable dispatch where
-     * the game reads an OPD pointer from a vtable and calls through it.
-     *
-     * OPD format: { uint32_t code_addr, uint32_t toc }
-     */
-    if (target >= 0x340000 && target < 0xC0E208) {
-        uint32_t code_addr = vm_read32(target);
-        if (code_addr != 0 && code_addr != target) {
-            /* Try dispatching to the code address from the OPD */
-            ctx->ctr = code_addr;
-            /* Save/restore TOC from OPD */
-            uint32_t saved_toc = (uint32_t)ctx->gpr[2];
-            ctx->gpr[2] = vm_read32(target + 4);
-
-            /* Search compile-time dispatch table for code_addr */
-            lo = 0; hi = g_dispatch_table_size - 1;
-            while (lo <= hi) {
-                int mid = (lo + hi) / 2;
-                if (g_dispatch_table[mid].guest_addr == code_addr) {
-                    g_dispatch_table[mid].host_func(ctx);
-                    ctx->gpr[2] = saved_toc;
-                    return;
-                } else if (g_dispatch_table[mid].guest_addr < code_addr) {
-                    lo = mid + 1;
-                } else {
-                    hi = mid - 1;
-                }
-            }
-            /* Also check HLE dispatch */
-            for (int i = 0; i < g_hle_dispatch_count; i++) {
-                if (g_hle_dispatch[i].guest_addr == code_addr) {
-                    g_hle_dispatch[i].handler(ctx);
-                    ctx->gpr[2] = saved_toc;
-                    return;
-                }
-            }
-            ctx->gpr[2] = saved_toc;
-        }
-    }
-
-    printf("[TJ] WARNING: indirect call to unmapped address 0x%08X (r3=0x%08X r4=0x%08X LR=0x%08X)\n",
-           target, (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4], (uint32_t)ctx->lr);
-    ctx->gpr[3] = 0; /* return NULL/OK */
-}

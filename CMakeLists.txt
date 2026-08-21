@@ -60,6 +60,7 @@ add_executable(tokyojungle
     src/main.cpp
     src/stubs.cpp
     src/dispatch_glue.cpp
+    src/tj_crt_overrides.cpp
     ${PS3RECOMP_PPU_SOURCES}
     ${GENERATED_SOURCES}
 )

@@ -146,6 +146,9 @@ def main():
           "--header-name", "ppu_recomp.h",
           "--source-name", "ppu_recomp.c"],
          "Phase 3: Lifting PPU to C++"),
+
+        ("post", str(PROJECT_ROOT / "scripts" / "post_lift.py"), [],
+         "Phase 4: Post-lift patches (CRT skips)"),
     ]
 
     # Skip stages if requested

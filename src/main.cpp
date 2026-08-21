@@ -49,18 +49,17 @@ int g_hle_dispatch_count = 0;
 // HLE import handlers (cellGcm, malloc, thread, etc.)
 #include "hle_imports.h"
 
-// Dispatch table externs (types from recomp_bridge.h, defined in dispatch_table.c)
+// The lifter's function_table[] (generated/ppu_recomp.h) is the single source
+// of truth for guest addr -> host body. It is emitted in ascending address
+// order and sentinel-terminated; function_table_count excludes the sentinel.
 
 static recomp_func_t dispatch_lookup(uint32_t guest_addr) {
-    int lo = 0, hi = g_dispatch_table_size - 1;
-    while (lo <= hi) {
-        int mid = (lo + hi) / 2;
-        if (g_dispatch_table[mid].guest_addr == guest_addr)
-            return g_dispatch_table[mid].host_func;
-        else if (g_dispatch_table[mid].guest_addr < guest_addr)
-            lo = mid + 1;
-        else
-            hi = mid - 1;
+    uint64_t lo = 0, hi = function_table_count;
+    while (lo < hi) {
+        uint64_t mid = lo + (hi - lo) / 2;
+        uint32_t a = (uint32_t)function_table[mid].addr;
+        if (a == guest_addr) return function_table[mid].func;
+        if (a < guest_addr) lo = mid + 1; else hi = mid;
     }
     return nullptr;
 }
@@ -140,7 +139,7 @@ int main(int argc, char* argv[])
     // ppu_lookup(); without this the whole 0x011xxxxx HLE range is unreachable
     // and every import call reports "unresolved indirect call".
     {
-        ppu_recomp_register();   /* the 35k lifted functions */
+        ppu_recomp_register();        /* the lifted function table */
         for (int i = 0; i < g_hle_dispatch_count; i++)
             ppu_register_function(g_hle_dispatch[i].guest_addr,
                                   g_hle_dispatch[i].handler);
@@ -181,7 +180,7 @@ int main(int argc, char* argv[])
     tj_install_watchdog(&g_main_ctx);
 
     // 5. Dispatch table info
-    printf("[TJ] Dispatch table: %d functions\n", g_dispatch_table_size);
+    printf("[TJ] Dispatch table: %llu functions\n", (unsigned long long)function_table_count);
 
     // 6. Look up and call entry point
     printf("\n[TJ] ============================================\n");

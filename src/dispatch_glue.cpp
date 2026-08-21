@@ -155,19 +155,19 @@ static HANDLE g_watchdog_main_thread = NULL;
 
 extern "C" volatile uint64_t g_indirect_call_count;
 
-/* RIP -> guest function resolver. Walks g_dispatch_table looking for the
- * entry whose host_func is the largest <= rip; that's the recompiled body
- * containing rip. Returns the guest_addr (which doubles as the func name
- * suffix) and host offset within the function. */
+/* RIP -> guest function resolver. Walks function_table looking for the entry
+ * whose host body is the largest <= rip; that's the recompiled body containing
+ * rip. Returns the guest_addr (which doubles as the func name suffix) and host
+ * offset within the function. */
 static uint32_t tj_resolve_rip(uintptr_t rip, uintptr_t* out_offset)
 {
     uintptr_t best = 0;
     uint32_t best_guest = 0;
-    for (int i = 0; i < g_dispatch_table_size; i++) {
-        uintptr_t hf = (uintptr_t)g_dispatch_table[i].host_func;
+    for (uint64_t i = 0; i < function_table_count; i++) {
+        uintptr_t hf = (uintptr_t)function_table[i].func;
         if (hf && hf <= rip && hf > best) {
             best = hf;
-            best_guest = g_dispatch_table[i].guest_addr;
+            best_guest = (uint32_t)function_table[i].addr;
         }
     }
     if (out_offset) *out_offset = rip - best;

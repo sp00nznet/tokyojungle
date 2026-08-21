@@ -56,3 +56,10 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 compile_commands.json
+
+# Build output (all generator/compiler variants)
+build_*/
+
+# Stale parallel project tree from an earlier bring-up attempt (359 MB,
+# contains its own build/ and meta/). Not part of the current pipeline.
+project/
