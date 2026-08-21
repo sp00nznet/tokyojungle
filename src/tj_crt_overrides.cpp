@@ -37,8 +37,7 @@ void tj_crt_skip(ppu_context* ctx, const char* what)
  * into .data at TOC+0x2A98 = 0x0035BCB8 -> 0x00C0E000, the last object in BSS.
  * That malloc_state is never initialised: it reads as all zeroes for the whole
  * boot, so ok_magic() fails and every allocation returns 0. operator new
- * (func_0023D1FC) then throws and the game aborts with "exception: bad
- * allocation" before it ever reaches graphics init.
+ * (func_0023D1FC) then throws and the game aborts with "exception: bad\n * allocation" before it ever reaches graphics init.
  *
  * Until the mspace is genuinely created, point the eight public heap wrappers
  * at the HLE bump allocator (import_resolver.h). Every one of them currently
@@ -219,8 +218,29 @@ void tj_pure_virtual(ppu_context* ctx)
  * runs on the faulting stack before unwinding, so the lifted guest frames are
  * still there to walk. By the time the handler body runs they are gone.
  */
+/* TJ_PEEK=<hex>[,<words>]: dump guest memory at the fault. Most "wild pointer"
+ * faults trace back to a table the guest built, and the fastest way to see
+ * which entry is wrong is to look at it. */
+static void tj_peek(void)
+{
+    const char* e = getenv("TJ_PEEK");
+    if (!e || !*e) return;
+    char* end = 0;
+    unsigned long addr = strtoul(e, &end, 16);
+    unsigned n = 16;
+    if (end && *end == ',') n = (unsigned)strtoul(end + 1, 0, 0);
+    if (n > 256) n = 256;
+    fprintf(stderr, "[TJ] peek 0x%08lX:", addr);
+    for (unsigned i = 0; i < n; i++) {
+        if (i % 8 == 0) fprintf(stderr, "\n   +0x%03X:", i * 4);
+        fprintf(stderr, " %08X", vm_read32((uint32_t)addr + i * 4));
+    }
+    fprintf(stderr, "\n");
+}
+
 extern "C" int tj_crash_filter(unsigned long code)
 {
+    tj_peek();
     void* bt[64];
     unsigned short n = RtlCaptureStackBackTrace(0, 64, bt, 0);
     fprintf(stderr, "\n[TJ] fault 0x%08lX -- guest chain:\n", code);

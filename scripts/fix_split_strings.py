@@ -47,8 +47,17 @@ def fix(path):
         nxt = lines[i + 1] if i + 1 < len(lines) else None
         if (nxt is not None
                 and unescaped_quote_count(cur) % 2 == 1
-                and nxt.lstrip().startswith(QUO)):
-            out.append(cur + BSL + "n" + nxt.lstrip())
+                and unescaped_quote_count(nxt) % 2 == 1):
+            # Two shapes. If the continuation starts (after indentation) with a
+            # quote, the whitespace is source indentation and should go:
+            #     printf("...
+            #            ", arg);
+            # Otherwise the leading whitespace is part of the string itself and
+            # must be kept:
+            #     fprintf(stderr, "
+            #        +0x%03X:", i);
+            tail = nxt.lstrip() if nxt.lstrip().startswith(QUO) else nxt
+            out.append(cur + BSL + "n" + tail)
             i += 2
             fixed += 1
             continue

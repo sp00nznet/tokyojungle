@@ -95,7 +95,7 @@ static void tj_guest_caller(uint32_t opd_addr,
 
     /* Bounce a small per-callback scratch stack out of a reserved high
      * region so reentrant Check calls don't trample each other. */
-    static uint32_t s_cb_sp = 0xCFFE0000;
+    static uint32_t s_cb_sp = 0xD04F0000;   /* see TJ_CB_STACK_BASE in main.cpp */
 
     ppu_context cb_ctx;
     ppu_context_init(&cb_ctx);
@@ -114,7 +114,7 @@ static void tj_guest_caller(uint32_t opd_addr,
     cb_ctx.ctr    = func;
 
     s_cb_sp -= 0x1000;
-    if (s_cb_sp < 0xCFF80000) s_cb_sp = 0xCFFE0000;
+    if (s_cb_sp < 0xD0410000) s_cb_sp = 0xD04F0000;
 
     fprintf(stderr, "[TJ:guest-cb] opd=0x%08X func=0x%08X r3=0x%llX\n",
             opd_addr, func, (unsigned long long)a0);

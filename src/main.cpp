@@ -74,6 +74,17 @@ extern "C" void tj_install_guest_caller(void);
 extern "C" void tj_install_watchdog(ppu_context* ctx);
 
 // Main PPU context
+/* RSX local memory, as cellGcmGetConfiguration reports it. */
+#define TJ_LOCAL_MEM_BASE   0xC0000000u
+#define TJ_LOCAL_MEM_SIZE   0x10000000u   /* 256 MB -> ends at 0xD0000000 */
+
+/* Guest-callback scratch stacks. These used to sit at 0xCFFE0000, which is
+ * INSIDE the RSX local-memory window above -- the game bump-allocates VRAM up
+ * through there, so the two would have quietly overwritten each other. Put
+ * them above the main guest stack (VM_STACK_BASE 0xD0000000) instead. */
+#define TJ_CB_STACK_BASE    0xD0400000u
+#define TJ_CB_STACK_SPAN    0x00100000u
+
 static ppu_context g_main_ctx;
 
 extern "C" void ppu_register_function(uint64_t, void (*)(ppu_context*));
@@ -128,8 +139,24 @@ int main(int argc, char* argv[])
     // guest callback therefore faulted on its own first instruction
     // (`stdu r1,-N(r1)`). It only showed up now because this is the first
     // build where a guest callback -- the GCM flip handler -- actually fires.
-    vm_commit(0xCFF00000u, 0x00100000u);
-    printf("[TJ] Guest-callback stacks committed (0xCFF00000, 1MB)\n");
+    vm_commit(TJ_CB_STACK_BASE, TJ_CB_STACK_SPAN);
+    printf("[TJ] Guest-callback stacks committed (0x%08X, %uKB)\n",
+           TJ_CB_STACK_BASE, TJ_CB_STACK_SPAN / 1024);
+
+    // 1b4. RSX local memory (VRAM).
+    //
+    // cellGcmGetConfiguration reports localAddress = 0xC0000000 -- where a
+    // real PS3 maps RSX local memory -- and Tokyo Jungle takes it at its
+    // word: it carves VRAM into six arenas (0xC0000000, 0xC1000000,
+    // 0xC7A00000, 0xC8200000, 0xCD900000, 0xCE300000) and bump-allocates out
+    // of them. None of that was ever committed, so the first memcpy into an
+    // arena faulted on a perfectly valid VRAM address.
+    //
+    // The guest never asks for this memory -- no sys_memory_allocate, no
+    // mmapper -- because on hardware cellGcmInit maps it.
+    vm_commit(TJ_LOCAL_MEM_BASE, TJ_LOCAL_MEM_SIZE);
+    printf("[TJ] RSX local memory committed (0x%08X, %u MB)\n",
+           TJ_LOCAL_MEM_BASE, TJ_LOCAL_MEM_SIZE / (1024 * 1024));
 
     // 1b4. cellFs path mappings.
     //

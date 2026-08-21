@@ -557,6 +557,8 @@ static void hle_game_content_permit(ppu_context* ctx) {
 
 #include "tj_import_names.h"
 
+static int tj_keep_on_tj(const char* name);
+
 /* One handler shared by every import the ELF left unresolved. Each such import
  * has its OWN guest address (TJ_GENERIC_ADDR), so ctx->ctr identifies which
  * slot the guest called even though the body is the same.
@@ -593,7 +595,7 @@ static void hle_generic_named(ppu_context* ctx) {
                tj_import_name(slot), slot, (uint32_t)ctx->gpr[3],
                (uint32_t)ctx->gpr[4], (uint32_t)ctx->gpr[5]);
 
-    if (nid && ps3_hle_has(nid)) {
+    if (nid && ps3_hle_has(nid) && !tj_keep_on_tj(tj_import_name(slot))) {
         if (!seen[idx]) {
             seen[idx] = 1;
             printf("[import] -> ps3recomp %s (NID 0x%08X)\n",
@@ -640,7 +642,12 @@ static int tj_keep_on_tj(const char* name) {
     for (const char* p = keep; *p; ) {
         const char* c = strchr(p, ',');
         size_t len = c ? (size_t)(c - p) : strlen(p);
-        if (len == n && strncmp(p, name, n) == 0) return 1;
+        /* "cellFont*" holds a whole library back. */
+        if (len && p[len - 1] == '*') {
+            if (strncmp(p, name, len - 1) == 0) return 1;
+        } else if (len == n && strncmp(p, name, n) == 0) {
+            return 1;
+        }
         if (!c) break;
         p = c + 1;
     }
