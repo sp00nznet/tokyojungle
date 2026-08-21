@@ -275,7 +275,10 @@ static void resolve_all_imports(uint32_t toc) {
     // The value 0x39800000 appears in function descriptors (OPD entries)
     // as the code address field. Replace with our generic HLE stub's
     // guest address so ppc_indirect_call can dispatch it.
-    uint32_t scan_start = 0x010000;
+    /* Data segment ONLY. 0x39800000 is also the encoding of `li r12,0`, the
+     * first instruction of every PPC64 import stub, so scanning .text stamped
+     * the HLE address over ~354 real instructions. */
+    uint32_t scan_start = 0x340000;
     uint32_t scan_end   = 0x340000 + 0x8CE208;
     int patched = 0;
     uint8_t target_be[4] = {0x39, 0x80, 0x00, 0x00}; // 0x39800000 big-endian

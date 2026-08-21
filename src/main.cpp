@@ -72,11 +72,13 @@ namespace tj_stubs {
 
 // Guest callback dispatch hook installer (defined in dispatch_glue.cpp)
 extern "C" void tj_install_guest_caller(void);
-extern "C" void tj_build_function_table(void);
 extern "C" void tj_install_watchdog(ppu_context* ctx);
 
 // Main PPU context
 static ppu_context g_main_ctx;
+
+extern "C" void ppu_register_function(uint64_t, void (*)(ppu_context*));
+extern "C" void ppu_recomp_register(void);
 
 int main(int argc, char* argv[])
 {
@@ -133,6 +135,17 @@ int main(int argc, char* argv[])
     // 2c. Register HLE import handlers for critical functions
     register_hle_imports(elf.toc);
 
+    // 2d. Mirror them into the runtime's dispatch table. Indirect calls now go
+    // through ps3recomp's ps3_indirect_call (ppu_loader.cpp), which resolves via
+    // ppu_lookup(); without this the whole 0x011xxxxx HLE range is unreachable
+    // and every import call reports "unresolved indirect call".
+    {
+        ppu_recomp_register();   /* the 35k lifted functions */
+        for (int i = 0; i < g_hle_dispatch_count; i++)
+            ppu_register_function(g_hle_dispatch[i].guest_addr,
+                                  g_hle_dispatch[i].handler);
+    }
+
     // 3. Initialize PPU context
     ppu_context_init(&g_main_ctx);
     uint32_t stack_size = 1024 * 1024;
@@ -164,9 +177,6 @@ int main(int argc, char* argv[])
     // cellGcm vblank/flip handlers, save-data completion) can dispatch back
     // into recompiled guest code. Without this the main loop hangs on
     // vsync/flip and sysutil never fires events.
-    /* The runtime loader resolves indirect branches through
-     * function_table[]; build it from our dispatch table first. */
-    tj_build_function_table();
     tj_install_guest_caller();
     tj_install_watchdog(&g_main_ctx);
 
