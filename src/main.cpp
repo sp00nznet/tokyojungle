@@ -107,6 +107,27 @@ int main(int argc, char* argv[])
     vm_commit(0, 0x10000);
     printf("[TJ] Page 0 guard committed (64KB)\n");
 
+    // 1b2. ps3recomp's cellGcmSys keeps its RSX label slots, the CellGcmControl
+    // register and the FIFO-callback sentinel in guest memory at 0x03000000,
+    // and never commits that itself -- it assumes the harness did. TJ commits
+    // lazily, so cellGcmGetControlRegister handed the game a guest EA nothing
+    // backed, and the flip handler faulted on its first read of `put`.
+    //   0x03000000  256 RSX label slots
+    //   0x03002000  CellGcmControl {put, get, ref}
+    //   0x03002F00  FIFO command-buffer-full callback sentinel
+    vm_commit(0x03000000u, 0x10000u);
+    memset(vm_base + 0x03000000u, 0, 0x10000u);
+    printf("[TJ] GCM label/control page committed (0x03000000, 64KB)\n");
+
+    // 1b3. Guest-callback scratch stacks. tj_guest_caller (dispatch_glue.cpp)
+    // hands each callback a stack walking down from 0xCFFE0000, but nothing
+    // committed that range -- it is below VM_STACK_BASE, not part of it. Every
+    // guest callback therefore faulted on its own first instruction
+    // (`stdu r1,-N(r1)`). It only showed up now because this is the first
+    // build where a guest callback -- the GCM flip handler -- actually fires.
+    vm_commit(0xCFF00000u, 0x00100000u);
+    printf("[TJ] Guest-callback stacks committed (0xCFF00000, 1MB)\n");
+
     // 1c. Initialize LV2 syscall dispatch table
     lv2_register_all_syscalls(&g_lv2_syscalls);
 
