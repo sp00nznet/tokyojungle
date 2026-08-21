@@ -34,7 +34,9 @@
  * stack on long fragment chains.
  * -----------------------------------------------------------------------*/
 
-extern "C" __declspec(thread) void (*g_trampoline_fn)(void*) = nullptr;
+/* Defined by the runtime (ppu_loader.cpp) now that this target compiles it;
+ * we only reference it here. */
+extern "C" __declspec(thread) void (*g_trampoline_fn)(void*);
 
 /* ---------------------------------------------------------------------------
  * Indirect call dispatch
@@ -46,11 +48,10 @@ extern "C" __declspec(thread) void (*g_trampoline_fn)(void*) = nullptr;
 
 extern "C" volatile uint64_t g_indirect_call_count = 0;
 
-extern "C" void ps3_indirect_call(ppu_context* ctx)
-{
-    g_indirect_call_count++;
-    ppc_indirect_call(ctx);
-}
+/* ps3_indirect_call is the runtime's (ppu_loader.cpp) now -- it does the same
+ * dispatch-table + OPD resolution this wrapper delegated to, so defining our
+ * own only duplicated the symbol. The counter it kept was diagnostic; the
+ * runtime has its own instrumentation. */
 
 /* ---------------------------------------------------------------------------
  * Guest callback dispatch hook

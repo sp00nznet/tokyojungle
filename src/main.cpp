@@ -32,7 +32,9 @@ uint8_t* vm_base = nullptr;
 
 // Global module registry and syscall table (declared extern in headers)
 ps3_module_registry g_ps3_module_registry = {};
-lv2_syscall_table g_lv2_syscalls = {};
+/* The syscall table lives in the runtime (lv2_register.c); we register into
+ * it rather than defining our own copy. */
+extern lv2_syscall_table g_lv2_syscalls;
 
 // Runtime HLE dispatch table (declared extern in recomp_bridge.h)
 hle_dispatch_entry_t g_hle_dispatch[HLE_DISPATCH_MAX] = {};
