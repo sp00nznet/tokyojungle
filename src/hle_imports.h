@@ -727,7 +727,6 @@ static void register_hle_imports(uint32_t toc) {
     hle_register(HLE_ADDR_SPU_PRINTF_INIT, hle_generic_ok);
 
     // NID 0x744680A2 = unknown, stub=0x342850
-    resolve_import(0x342850, HLE_ADDR_UNKNOWN_744680, toc);
     hle_register(HLE_ADDR_UNKNOWN_744680, hle_generic_ok);
 
     // NID 0x8461E528 = sys_time_get_system_time, stub=0x342858
@@ -821,17 +820,11 @@ static void register_hle_imports(uint32_t toc) {
 
     // Remaining resolved GCM NIDs:
     // 0x21397818 = _cellGcmSetFlipCommand, stub=0x3424C4
-    resolve_import(0x3424C4, HLE_ADDR_GENERIC_OK, toc);
     // 0xD8F88E1A = _cellGcmSetFlipCommandWithWaitLabel, stub=0x342584
-    resolve_import(0x342584, HLE_ADDR_GENERIC_OK, toc);
     // 0x63387071 = cellGcmGetLastFlipTime, stub=0x34250C
-    resolve_import(0x34250C, HLE_ADDR_GENERIC_OK, toc);
     // 0xD0B1D189 = cellGcmSetTile, stub=0x34257C
-    resolve_import(0x34257C, HLE_ADDR_GENERIC_OK, toc);
     // 0xD9B7653E = cellGcmUnbindTile, stub=0x34258C
-    resolve_import(0x34258C, HLE_ADDR_GENERIC_OK, toc);
     // 0xA75640E8 = cellGcmUnbindZcull, stub=0x34255C
-    resolve_import(0x34255C, HLE_ADDR_GENERIC_OK, toc);
     // 0xA53D12AE = cellGcmSetDisplayBuffer, stub=0x34254C
     resolve_import(0x3424FC, HLE_ADDR_GCM_SET_DISPLAY_BUF, toc);
     hle_register(HLE_ADDR_GCM_SET_DISPLAY_BUF, hle_generic_ok);

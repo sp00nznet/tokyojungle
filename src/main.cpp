@@ -147,8 +147,12 @@ int main(int argc, char* argv[])
         const char* vfs = getenv("PS3_VFS_ROOT");
         if (!vfs || !*vfs) vfs = ".";
         cellfs_set_root_path(vfs);
-        cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/USRDIR/", "USRDIR/");
-        cellfs_add_path_mapping("/dev_hdd0/game/NPUA80523/USRDIR/", "USRDIR/");
+        /* Map the whole PS3_GAME dir, not just USRDIR: the installer also
+         * stats /dev_bdvd/PS3_GAME/ICON0.PNG and friends, and a USRDIR-only
+         * mapping sent those to the default gamedata/dev_bdvd/ prefix, where
+         * nothing exists. */
+        cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/", "");
+        cellfs_add_path_mapping("/dev_hdd0/game/NPUA80523/", "");
         cellfs_add_path_mapping("/app_home/", "");
         printf("[TJ] cellFs root=\"%s\" (disc + hdd game dirs -> USRDIR/)\n", vfs);
     }
