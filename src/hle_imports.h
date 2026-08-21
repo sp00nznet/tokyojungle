@@ -555,32 +555,93 @@ static void hle_game_content_permit(ppu_context* ctx) {
  * Registration — call this after import table population
  * ====================================================================== */
 
-/* One no-op handler shared by every import the ELF left unresolved. Each such
- * import has its OWN guest address (TJ_GENERIC_ADDR), so ctx->ctr identifies
- * which slot the guest called even though the body is the same. Reports each
- * distinct import once, with the arguments -- that list is the roadmap of what
- * still needs a real implementation. */
+#include "tj_import_names.h"
+
+/* One handler shared by every import the ELF left unresolved. Each such import
+ * has its OWN guest address (TJ_GENERIC_ADDR), so ctx->ctr identifies which
+ * slot the guest called even though the body is the same.
+ *
+ * ps3recomp implements a large part of the firmware surface already (its
+ * libs/ tree: cellGcmSys, cellResc, cellAudio, cellFs, ...), keyed by NID.
+ * generated/tj_import_names.h carries the NID for every import in this ELF, so
+ * ask ps3recomp first and only fall back to return-0 when it has nothing. That
+ * is what lights up cellResc -- Tokyo Jungle drives its display through the
+ * resolution converter, so an unimplemented cellRescInit/SetSrc/SetDsts means
+ * nothing is ever scanned out no matter how well the rest of the boot goes.
+ *
+ * Imports ps3recomp does not implement are reported once, with arguments --
+ * that list is the roadmap of what still needs writing.
+ */
+extern "C" int  ps3_hle_has(unsigned int nid);
+extern "C" void ps3_hle_call(unsigned int nid, ppu_context* ctx);
+
 static void hle_generic_named(ppu_context* ctx) {
     static unsigned char seen[TJ_GENERIC_MAX];
     uint32_t idx = ((uint32_t)ctx->ctr - TJ_GENERIC_BASE) / 4u;
-    if (idx < TJ_GENERIC_MAX && !seen[idx]) {
+    if (idx >= TJ_GENERIC_MAX) { ctx->gpr[3] = 0; return; }
+
+    uint32_t slot = g_generic_slot[idx];
+    uint32_t nid  = tj_import_nid(slot);
+
+    if (nid && ps3_hle_has(nid)) {
+        if (!seen[idx]) {
+            seen[idx] = 1;
+            printf("[import] -> ps3recomp %s (NID 0x%08X)\n",
+                   tj_import_name(slot), nid);
+        }
+        ps3_hle_call(nid, ctx);
+        return;
+    }
+
+    if (!seen[idx]) {
         seen[idx] = 1;
-        // The libc heap handle lives at TOC+0x2A98 = 0x0035BCB8; every one of
-        // the eight heap wrappers at 0x24DC7C-0x24DE14 loads it. Print it here
-        // to tell "mspace never created" (0) from "mspace has no memory".
-        printf("[heap] mspace handle @0x0035BCB8 = 0x%08X\n", vm_read32(0x0035BCB8));
-        {   /* dump each time: the mspace fills in as boot proceeds */
-            uint32_t ms = vm_read32(0x0035BCB8);
-            for (uint32_t off = 0; off < 0x600; off += 4) {
-                uint32_t v = vm_read32(ms + off);
-                if (v) printf("[heap]   +0x%03X = 0x%08X%c", off, v, 10);
-            } }
-        printf("[import] UNIMPLEMENTED slot=0x%08X  r3=0x%08X r4=0x%08X "
+        printf("[import] UNIMPLEMENTED %s (slot 0x%08X)  r3=0x%08X r4=0x%08X "
                "r5=0x%08X r6=0x%08X\n",
-               g_generic_slot[idx], (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
-               (uint32_t)ctx->gpr[5], (uint32_t)ctx->gpr[6]);
+               tj_import_name(slot), slot, (uint32_t)ctx->gpr[3],
+               (uint32_t)ctx->gpr[4], (uint32_t)ctx->gpr[5],
+               (uint32_t)ctx->gpr[6]);
     }
     ctx->gpr[3] = 0;
+}
+
+/* Hand the graphics libraries to ps3recomp.
+ *
+ * TJ's own cellGcm* handlers are bring-up stubs: they record a little state
+ * and return 0, and nothing downstream of them draws. ps3recomp's
+ * libs/video/cellGcmSys.c is the implementation wired to the RSX command
+ * translator and the D3D12 backend that renders Rubber Ducky, and its
+ * cellResc sits on top of that same state -- which is why cellRescInit
+ * faults when it runs against TJ's stub GCM instead.
+ *
+ * So for these modules, prefer ps3recomp wherever it has the NID: rebind the
+ * slot to a per-slot generic address, which routes through ps3_hle_call.
+ * Runs after register_hle_imports so it overrides TJ's bindings.
+ *
+ * TJ_LEGACY_GCM=1 keeps TJ's stubs, for bisecting a regression against them.
+ */
+static void prefer_ps3recomp_graphics(uint32_t toc) {
+    if (getenv("TJ_LEGACY_GCM")) {
+        printf("[HLE] TJ_LEGACY_GCM: keeping TJ's own graphics stubs\n");
+        return;
+    }
+    static const char* const kPrefixes[] = { "cellGcm", "cellResc", "cellVideoOut" };
+    int moved = 0;
+    for (int i = 0; i < g_tj_import_name_count; i++) {
+        const tj_import_entry* e = &g_tj_import_names[i];
+        int want = 0;
+        for (unsigned p = 0; p < sizeof(kPrefixes) / sizeof(kPrefixes[0]); p++) {
+            size_t n = strlen(kPrefixes[p]);
+            if (strncmp(e->name, kPrefixes[p], n) == 0) { want = 1; break; }
+        }
+        if (!want || !ps3_hle_has(e->nid)) continue;
+        if (g_generic_count >= TJ_GENERIC_MAX) break;
+        int idx = g_generic_count++;
+        g_generic_slot[idx] = e->slot;
+        resolve_import(e->slot, TJ_GENERIC_ADDR(idx), toc);
+        hle_register(TJ_GENERIC_ADDR(idx), hle_generic_named);
+        moved++;
+    }
+    printf("[HLE] %d graphics imports routed to ps3recomp\n", moved);
 }
 
 /* Register the per-slot generic addresses. Called after resolve_all_imports,

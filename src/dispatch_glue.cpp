@@ -71,7 +71,9 @@ extern "C" void ps3_indirect_call(ppu_context* ctx);
  * -----------------------------------------------------------------------*/
 
 extern "C" {
-ps3_guest_caller_fn g_ps3_guest_caller;  /* declared in ps3emu/guest_call.h */
+/* Defined by libs/system/cellSysutil.c now that the ps3recomp module set is
+ * linked in; we only install our hook into it. */
+extern ps3_guest_caller_fn g_ps3_guest_caller;
 }
 
 /* ps3_guest_caller_fn widened from four args to eight (r3..r10) in ps3recomp;

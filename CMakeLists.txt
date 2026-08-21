@@ -61,6 +61,7 @@ add_executable(tokyojungle
     src/stubs.cpp
     src/dispatch_glue.cpp
     src/tj_crt_overrides.cpp
+    src/gen/ppu_hle_nids.cpp   # generated: NID -> ps3recomp lib handler
     ${PS3RECOMP_PPU_SOURCES}
     ${GENERATED_SOURCES}
 )
