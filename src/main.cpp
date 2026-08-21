@@ -153,6 +153,31 @@ int main(int argc, char* argv[])
     ppu_set_stack(&g_main_ctx, VM_STACK_BASE, stack_size);
     g_main_ctx.gpr[2] = elf.toc;  // TOC register
 
+    // --- Thread-local storage -------------------------------------------
+    // r13 is the PPC64 thread pointer. Nothing was setting it, so it stayed
+    // 0 and every TLS access dereferenced a small negative address: the
+    // guest's own printf starts `addis r7,r13,0 / addi r7,r7,-28492`, which
+    // with r13=0 gives r7 = 0xFFFFFFFFFFFF90B4 and faults as soon as main
+    // logs anything.
+    //
+    // PPC64 ELF places the static TLS block at TP - 0x7000 and the linker
+    // folds that bias into every @tprel offset, so -28492 (-0x6F4C) means
+    // tls_base + 0xB4 -- inside the 0x134-byte block this ELF declares.
+    // __sys_init_tls would normally do this; its import is unimplemented.
+    if (elf.tls_memsz) {
+        const uint32_t TLS_BASE = 0x01300000;   // free: HLE ends at 0x011FFFFF,
+        const uint32_t TLS_BIAS = 0x7000;       // bump heap starts at 0x02000000
+        uint32_t span = TLS_BIAS + elf.tls_memsz + 0x1000;
+        vm_commit(TLS_BASE, (span + 0xFFFF) & ~0xFFFFu);
+        memset(vm_base + TLS_BASE, 0, span);
+        if (elf.tls_filesz)
+            memcpy(vm_base + TLS_BASE, vm_base + elf.tls_vaddr, elf.tls_filesz);
+        g_main_ctx.gpr[13] = TLS_BASE + TLS_BIAS;
+        printf("[TJ] TLS block at 0x%08X (image 0x%08X, %u bytes), r13=0x%08X\n",
+               TLS_BASE, elf.tls_vaddr, elf.tls_memsz,
+               (uint32_t)g_main_ctx.gpr[13]);
+    }
+
     // Pre-fill the stack with TOC value at offset 0x28 of every 16-byte
     // aligned position. PPC64 ABI saves TOC at SP+0x28, and the lifter
     // generates ld r2,0x28(r1) after inter-module calls. Since the binary

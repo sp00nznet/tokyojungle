@@ -29,11 +29,11 @@ RECOMP_GLOB = os.path.join(ROOT, "generated", "ppu_recomp_*.cpp")
 # guest addr -> human name. The real bodies abort() or wander into kernel
 # structures the HLE runtime does not model.
 CRT_SKIPS = {
-    "002448EC": "__init_section (static constructors)",
-    "0024DE14": "stdio init",
-    "00249298": "memory region init",
-    "00248C8C": "exception init",
-    "00010200": "__crt_atexit",
+    # Empty: with the import table fully resolved (see src/import_resolver.h)
+    # the real CRT init chain runs. It only abort()ed because
+    # sys_ppu_thread_create "returned" a stale nonzero r3 -- the call had been
+    # dropped by the lifter. Re-add an address here if its real body proves
+    # too far ahead of the runtime.
 }
 
 # The __sys_init_* entries at 0x0025Fxxx that the old generated/ppu_stubs.c
@@ -42,6 +42,19 @@ CRT_SKIPS = {
 
 SIG = re.compile(r"void func_([0-9A-F]{8})\(ppu_context\* ctx\) \{\s*$")
 MARK = "/* tj-crt-skip"
+HEAP_MARK = "/* tj-heap"
+
+# guest addr -> (host redirect symbol, human name). The libc heap wrappers:
+# the mspace they front is never initialised, so all of them return 0 and the
+# game aborts with "exception: bad allocation" before graphics init. See
+# src/tj_crt_overrides.cpp for how each was identified from the binary.
+HEAP_PATCHES = {
+    "0024DDC0": ("tj_heap_malloc",   "malloc"),
+    "0024DD94": ("tj_heap_free",     "free"),
+    "0024DCBC": ("tj_heap_free",     "free (realloc-internal)"),
+    "0024DCEC": ("tj_heap_memalign", "memalign"),
+    "0024DD24": ("tj_heap_realloc",  "realloc"),
+}
 
 
 def patch_file(path):
@@ -52,6 +65,22 @@ def patch_file(path):
     while i < len(lines):
         m = SIG.match(lines[i])
         addr = m.group(1) if m else None
+        if addr in HEAP_PATCHES:
+            sym, name = HEAP_PATCHES[addr]
+            if HEAP_MARK in (lines[i + 1] if i + 1 < len(lines) else ""):
+                patched.add(addr)                    # already patched
+                out.append(lines[i]); i += 1; continue
+            j = i + 1
+            while j < len(lines) and lines[j].rstrip(chr(10)) != "}":
+                j += 1
+            out.append(lines[i])
+            out.append("    " + HEAP_MARK + ": " + name + " -> " + sym + " */" + chr(10))
+            out.append("    extern void " + sym + "(ppu_context*);" + chr(10))
+            out.append("    " + sym + "(ctx);" + chr(10))
+            out.append("}" + chr(10))
+            patched.add(addr)
+            i = j + 1
+            continue
         if addr in CRT_SKIPS:
             if MARK in (lines[i + 1] if i + 1 < len(lines) else ""):
                 patched.add(addr)                       # already patched
@@ -87,8 +116,10 @@ def main():
     for path in files:
         done |= patch_file(path)
 
-    print("post_lift: CRT skips %d/%d patched" % (len(done), len(CRT_SKIPS)))
-    missing = sorted(set(CRT_SKIPS) - done)
+    want = set(CRT_SKIPS) | set(HEAP_PATCHES)
+    print("post_lift: %d/%d redirects (%d CRT skips, %d heap)"
+          % (len(done), len(want), len(CRT_SKIPS), len(HEAP_PATCHES)))
+    missing = sorted(want - done)
     if missing:
         print("  WARNING: not found (a re-lift may have moved them): %s"
               % ", ".join(missing), file=sys.stderr)

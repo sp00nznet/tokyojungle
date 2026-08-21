@@ -565,6 +565,16 @@ static void hle_generic_named(ppu_context* ctx) {
     uint32_t idx = ((uint32_t)ctx->ctr - TJ_GENERIC_BASE) / 4u;
     if (idx < TJ_GENERIC_MAX && !seen[idx]) {
         seen[idx] = 1;
+        // The libc heap handle lives at TOC+0x2A98 = 0x0035BCB8; every one of
+        // the eight heap wrappers at 0x24DC7C-0x24DE14 loads it. Print it here
+        // to tell "mspace never created" (0) from "mspace has no memory".
+        printf("[heap] mspace handle @0x0035BCB8 = 0x%08X\n", vm_read32(0x0035BCB8));
+        {   /* dump each time: the mspace fills in as boot proceeds */
+            uint32_t ms = vm_read32(0x0035BCB8);
+            for (uint32_t off = 0; off < 0x600; off += 4) {
+                uint32_t v = vm_read32(ms + off);
+                if (v) printf("[heap]   +0x%03X = 0x%08X%c", off, v, 10);
+            } }
         printf("[import] UNIMPLEMENTED slot=0x%08X  r3=0x%08X r4=0x%08X "
                "r5=0x%08X r6=0x%08X\n",
                g_generic_slot[idx], (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
@@ -591,7 +601,7 @@ static void register_hle_imports(uint32_t toc) {
     hle_register(HLE_ADDR_LWMUTEX_LOCK, hle_lwmutex_lock);
 
     // NID 0x1BC200F4 = sys_lwmutex_unlock, stub=0x342818
-    resolve_import(0x342818, HLE_ADDR_LWMUTEX_UNLOCK, toc);
+    resolve_import(0x342814, HLE_ADDR_LWMUTEX_UNLOCK, toc);
     hle_register(HLE_ADDR_LWMUTEX_UNLOCK, hle_lwmutex_unlock);
 
     // Slot 0x342820 is sys_lwmutex_create, NOT sys_ppu_thread_create. The
@@ -608,23 +618,23 @@ static void register_hle_imports(uint32_t toc) {
     hle_register(HLE_ADDR_THREAD_CREATE, hle_thread_create);
 
     // NID 0x2C847572 = _sys_process_atexitspawn, stub=0x342828
-    resolve_import(0x342828, HLE_ADDR_PROCESS_ATEXIT, toc);
+    resolve_import(0x34281C, HLE_ADDR_PROCESS_ATEXIT, toc);
     hle_register(HLE_ADDR_PROCESS_ATEXIT, hle_generic_ok);
 
     // NID 0x2F85C0EF = sys_lwmutex_create, stub=0x342830
-    resolve_import(0x342830, HLE_ADDR_LWMUTEX_CREATE, toc);
+    resolve_import(0x342820, HLE_ADDR_LWMUTEX_CREATE, toc);
     hle_register(HLE_ADDR_LWMUTEX_CREATE, hle_lwmutex_create);
 
     // NID 0x350D454E = sys_ppu_thread_get_id, stub=0x342838
-    resolve_import(0x342838, HLE_ADDR_THREAD_GET_ID, toc);
+    resolve_import(0x342824, HLE_ADDR_THREAD_GET_ID, toc);
     hle_register(HLE_ADDR_THREAD_GET_ID, hle_thread_get_id);
 
     // NID 0x42B23552 = sys_prx_register_library, stub=0x342840
-    resolve_import(0x342840, HLE_ADDR_PRX_REG_LIB, toc);
+    resolve_import(0x342828, HLE_ADDR_PRX_REG_LIB, toc);
     hle_register(HLE_ADDR_PRX_REG_LIB, hle_generic_ok);
 
     // NID 0x45FE2FCE = _sys_spu_printf_initialize, stub=0x342848
-    resolve_import(0x342848, HLE_ADDR_SPU_PRINTF_INIT, toc);
+    resolve_import(0x34282C, HLE_ADDR_SPU_PRINTF_INIT, toc);
     hle_register(HLE_ADDR_SPU_PRINTF_INIT, hle_generic_ok);
 
     // NID 0x744680A2 = unknown, stub=0x342850
@@ -632,89 +642,89 @@ static void register_hle_imports(uint32_t toc) {
     hle_register(HLE_ADDR_UNKNOWN_744680, hle_generic_ok);
 
     // NID 0x8461E528 = sys_time_get_system_time, stub=0x342858
-    resolve_import(0x342858, HLE_ADDR_TIME_GET, toc);
+    resolve_import(0x342834, HLE_ADDR_TIME_GET, toc);
     hle_register(HLE_ADDR_TIME_GET, hle_time_get);
 
     // NID 0x96328741 = _sys_process_at_Exitspawn, stub=0x342860
-    resolve_import(0x342860, HLE_ADDR_PROCESS_AT_EXIT, toc);
+    resolve_import(0x342838, HLE_ADDR_PROCESS_AT_EXIT, toc);
     hle_register(HLE_ADDR_PROCESS_AT_EXIT, hle_generic_ok);
 
     // NID 0xA2C7BA64 = sys_prx_exitspawn_with_level, stub=0x342868
-    resolve_import(0x342868, HLE_ADDR_PRX_EXITSPAWN, toc);
+    resolve_import(0x34283C, HLE_ADDR_PRX_EXITSPAWN, toc);
     hle_register(HLE_ADDR_PRX_EXITSPAWN, hle_generic_ok);
 
     // NID 0xA3E3BE68 = sys_ppu_thread_once, stub=0x342870
-    resolve_import(0x342870, HLE_ADDR_THREAD_ONCE, toc);
+    resolve_import(0x342840, HLE_ADDR_THREAD_ONCE, toc);
     hle_register(HLE_ADDR_THREAD_ONCE, hle_thread_once);
 
     // NID 0xAFF080A4 = sys_ppu_thread_exit, stub=0x342878
-    resolve_import(0x342878, HLE_ADDR_THREAD_EXIT, toc);
+    resolve_import(0x342844, HLE_ADDR_THREAD_EXIT, toc);
     hle_register(HLE_ADDR_THREAD_EXIT, hle_thread_exit);
 
     // NID 0xC3476D0C = sys_lwmutex_destroy, stub=0x342880
-    resolve_import(0x342880, HLE_ADDR_LWMUTEX_DESTROY, toc);
+    resolve_import(0x342848, HLE_ADDR_LWMUTEX_DESTROY, toc);
     hle_register(HLE_ADDR_LWMUTEX_DESTROY, hle_lwmutex_destroy);
 
     // NID 0xDD3B27AC = _sys_spu_printf_finalize, stub=0x342888
-    resolve_import(0x342888, HLE_ADDR_SPU_PRINTF_FIN, toc);
+    resolve_import(0x34284C, HLE_ADDR_SPU_PRINTF_FIN, toc);
     hle_register(HLE_ADDR_SPU_PRINTF_FIN, hle_generic_ok);
 
     // NID 0xE6F2C1E7 = sys_process_exit, stub=0x342890
-    resolve_import(0x342890, HLE_ADDR_PROCESS_EXIT, toc);
+    resolve_import(0x342850, HLE_ADDR_PROCESS_EXIT, toc);
     hle_register(HLE_ADDR_PROCESS_EXIT, hle_process_exit);
 
     // --- cellGcmSys (key functions) ---
     // NID 0x15BAE46B = _cellGcmInitBody, stub=0x3424BC
-    resolve_import(0x3424BC, HLE_ADDR_GCM_INIT, toc);
+    resolve_import(0x3424B4, HLE_ADDR_GCM_INIT, toc);
     hle_register(HLE_ADDR_GCM_INIT, hle_gcm_init);
     printf("[HLE]   _cellGcmInitBody -> stub=0x3424BC, HLE=0x%08X\n", HLE_ADDR_GCM_INIT);
 
-    resolve_import(0x3424CC, HLE_ADDR_GCM_ADDR_TO_OFFSET, toc);
+    resolve_import(0x3424BC, HLE_ADDR_GCM_ADDR_TO_OFFSET, toc);
     hle_register(HLE_ADDR_GCM_ADDR_TO_OFFSET, hle_gcm_addr_to_offset);
 
-    resolve_import(0x3424F4, HLE_ADDR_GCM_SET_FLIP_MODE, toc);
+    resolve_import(0x3424D0, HLE_ADDR_GCM_SET_FLIP_MODE, toc);
     hle_register(HLE_ADDR_GCM_SET_FLIP_MODE, hle_generic_ok);
 
-    resolve_import(0x34251C, HLE_ADDR_GCM_GET_FLIP_STATUS, toc);
+    resolve_import(0x3424E4, HLE_ADDR_GCM_GET_FLIP_STATUS, toc);
     hle_register(HLE_ADDR_GCM_GET_FLIP_STATUS, hle_generic_ok);
 
-    resolve_import(0x3424EC, HLE_ADDR_GCM_BIND_TILE, toc);
+    resolve_import(0x3424CC, HLE_ADDR_GCM_BIND_TILE, toc);
     hle_register(HLE_ADDR_GCM_BIND_TILE, hle_generic_ok);
 
-    resolve_import(0x342534, HLE_ADDR_GCM_BIND_ZCULL, toc);
+    resolve_import(0x3424F0, HLE_ADDR_GCM_BIND_ZCULL, toc);
     hle_register(HLE_ADDR_GCM_BIND_ZCULL, hle_generic_ok);
 
-    resolve_import(0x34253C, HLE_ADDR_GCM_MAP_MAIN_MEM, toc);
+    resolve_import(0x3424F4, HLE_ADDR_GCM_MAP_MAIN_MEM, toc);
     hle_register(HLE_ADDR_GCM_MAP_MAIN_MEM, hle_gcm_map_main_mem);
 
-    resolve_import(0x342514, HLE_ADDR_GCM_MAP_EA_IO, toc);
+    resolve_import(0x3424E0, HLE_ADDR_GCM_MAP_EA_IO, toc);
     hle_register(HLE_ADDR_GCM_MAP_EA_IO, hle_gcm_map_ea_io);
 
-    resolve_import(0x342504, HLE_ADDR_GCM_MAP_EA_IO_FLAGS, toc);
+    resolve_import(0x3424D8, HLE_ADDR_GCM_MAP_EA_IO_FLAGS, toc);
     hle_register(HLE_ADDR_GCM_MAP_EA_IO_FLAGS, hle_gcm_map_ea_io);
 
-    resolve_import(0x34259C, HLE_ADDR_GCM_GET_CONFIG, toc);
+    resolve_import(0x342524, HLE_ADDR_GCM_GET_CONFIG, toc);
     hle_register(HLE_ADDR_GCM_GET_CONFIG, hle_gcm_get_config);
 
-    resolve_import(0x342554, HLE_ADDR_GCM_GET_CTRL_REG, toc);
+    resolve_import(0x342500, HLE_ADDR_GCM_GET_CTRL_REG, toc);
     hle_register(HLE_ADDR_GCM_GET_CTRL_REG, hle_gcm_get_ctrl_reg);
 
-    resolve_import(0x3425AC, HLE_ADDR_GCM_GET_LABEL_ADDR, toc);
+    resolve_import(0x34252C, HLE_ADDR_GCM_GET_LABEL_ADDR, toc);
     hle_register(HLE_ADDR_GCM_GET_LABEL_ADDR, hle_gcm_get_label_addr);
 
-    resolve_import(0x342574, HLE_ADDR_GCM_SET_TILE_INFO, toc);
+    resolve_import(0x342510, HLE_ADDR_GCM_SET_TILE_INFO, toc);
     hle_register(HLE_ADDR_GCM_SET_TILE_INFO, hle_generic_ok);
 
-    resolve_import(0x34256C, HLE_ADDR_GCM_RESET_FLIP, toc);
+    resolve_import(0x34250C, HLE_ADDR_GCM_RESET_FLIP, toc);
     hle_register(HLE_ADDR_GCM_RESET_FLIP, hle_generic_ok);
 
-    resolve_import(0x342544, HLE_ADDR_GCM_SET_FLIP_HANDLER, toc);
+    resolve_import(0x3424F8, HLE_ADDR_GCM_SET_FLIP_HANDLER, toc);
     hle_register(HLE_ADDR_GCM_SET_FLIP_HANDLER, hle_generic_ok);
 
-    resolve_import(0x342564, HLE_ADDR_GCM_SET_VBLANK_HANDLER, toc);
+    resolve_import(0x342508, HLE_ADDR_GCM_SET_VBLANK_HANDLER, toc);
     hle_register(HLE_ADDR_GCM_SET_VBLANK_HANDLER, hle_generic_ok);
 
-    resolve_import(0x3424B4, HLE_ADDR_GCM_SET_USER_HANDLER, toc);
+    resolve_import(0x3424B0, HLE_ADDR_GCM_SET_USER_HANDLER, toc);
     hle_register(HLE_ADDR_GCM_SET_USER_HANDLER, hle_generic_ok);
 
     resolve_import(0x3424AC, HLE_ADDR_GCM_GET_TILED_PITCH, toc);
@@ -734,30 +744,30 @@ static void register_hle_imports(uint32_t toc) {
     // 0xA75640E8 = cellGcmUnbindZcull, stub=0x34255C
     resolve_import(0x34255C, HLE_ADDR_GENERIC_OK, toc);
     // 0xA53D12AE = cellGcmSetDisplayBuffer, stub=0x34254C
-    resolve_import(0x34254C, HLE_ADDR_GCM_SET_DISPLAY_BUF, toc);
+    resolve_import(0x3424FC, HLE_ADDR_GCM_SET_DISPLAY_BUF, toc);
     hle_register(HLE_ADDR_GCM_SET_DISPLAY_BUF, hle_generic_ok);
 
     // --- cellSysutil ---
-    resolve_import(0x34273C, HLE_ADDR_SYSUTIL_REG_CB, toc);
+    resolve_import(0x342708, HLE_ADDR_SYSUTIL_REG_CB, toc);
     hle_register(HLE_ADDR_SYSUTIL_REG_CB, hle_sysutil_reg_cb);
 
-    resolve_import(0x3426E4, HLE_ADDR_SYSUTIL_CHECK_CB, toc);
+    resolve_import(0x3426DC, HLE_ADDR_SYSUTIL_CHECK_CB, toc);
     hle_register(HLE_ADDR_SYSUTIL_CHECK_CB, hle_sysutil_check_cb);
 
-    resolve_import(0x3426FC, HLE_ADDR_SYSUTIL_GET_PARAM_INT, toc);
+    resolve_import(0x3426E8, HLE_ADDR_SYSUTIL_GET_PARAM_INT, toc);
     hle_register(HLE_ADDR_SYSUTIL_GET_PARAM_INT, hle_sysutil_get_param_int);
 
-    resolve_import(0x342724, HLE_ADDR_VIDEOOUT_GET_STATE, toc);
+    resolve_import(0x3426FC, HLE_ADDR_VIDEOOUT_GET_STATE, toc);
     hle_register(HLE_ADDR_VIDEOOUT_GET_STATE, hle_videoout_get_state);
 
-    resolve_import(0x342764, HLE_ADDR_VIDEOOUT_GET_RES, toc);
+    resolve_import(0x34271C, HLE_ADDR_VIDEOOUT_GET_RES, toc);
     hle_register(HLE_ADDR_VIDEOOUT_GET_RES, hle_videoout_get_res);
 
-    resolve_import(0x3426DC, HLE_ADDR_VIDEOOUT_CONFIGURE, toc);
+    resolve_import(0x3426D8, HLE_ADDR_VIDEOOUT_CONFIGURE, toc);
     hle_register(HLE_ADDR_VIDEOOUT_CONFIGURE, hle_videoout_configure);
 
     // --- cellSysmodule ---
-    resolve_import(0x3426CC, HLE_ADDR_SYSMOD_LOAD, toc);
+    resolve_import(0x3426C8, HLE_ADDR_SYSMOD_LOAD, toc);
     hle_register(HLE_ADDR_SYSMOD_LOAD, hle_sysmod_load);
 
     resolve_import(0x3426C4, HLE_ADDR_SYSMOD_UNLOAD, toc);
@@ -767,48 +777,48 @@ static void register_hle_imports(uint32_t toc) {
     resolve_import(0x342898, HLE_ADDR_PAD_INIT, toc);
     hle_register(HLE_ADDR_PAD_INIT, hle_pad_init);
 
-    resolve_import(0x3428C0, HLE_ADDR_PAD_END, toc);
+    resolve_import(0x3428AC, HLE_ADDR_PAD_END, toc);
     hle_register(HLE_ADDR_PAD_END, hle_generic_ok);
 
-    resolve_import(0x3428D8, HLE_ADDR_PAD_GET_DATA, toc);
+    resolve_import(0x3428B8, HLE_ADDR_PAD_GET_DATA, toc);
     hle_register(HLE_ADDR_PAD_GET_DATA, hle_pad_get_data);
 
-    resolve_import(0x3428E8, HLE_ADDR_PAD_GET_INFO2, toc);
+    resolve_import(0x3428C0, HLE_ADDR_PAD_GET_INFO2, toc);
     hle_register(HLE_ADDR_PAD_GET_INFO2, hle_pad_get_info2);
 
-    resolve_import(0x3428C8, HLE_ADDR_PAD_SET_PORT, toc);
+    resolve_import(0x3428B0, HLE_ADDR_PAD_SET_PORT, toc);
     hle_register(HLE_ADDR_PAD_SET_PORT, hle_generic_ok);
 
     // --- cellAudio ---
     resolve_import(0x3423E8, HLE_ADDR_AUDIO_INIT, toc);
     hle_register(HLE_ADDR_AUDIO_INIT, hle_audio_init);
 
-    resolve_import(0x342428, HLE_ADDR_AUDIO_PORT_OPEN, toc);
+    resolve_import(0x342408, HLE_ADDR_AUDIO_PORT_OPEN, toc);
     hle_register(HLE_ADDR_AUDIO_PORT_OPEN, hle_audio_port_open);
 
-    resolve_import(0x342418, HLE_ADDR_AUDIO_PORT_START, toc);
+    resolve_import(0x342400, HLE_ADDR_AUDIO_PORT_START, toc);
     hle_register(HLE_ADDR_AUDIO_PORT_START, hle_generic_ok);
 
-    resolve_import(0x342408, HLE_ADDR_AUDIO_PORT_STOP, toc);
+    resolve_import(0x3423F8, HLE_ADDR_AUDIO_PORT_STOP, toc);
     hle_register(HLE_ADDR_AUDIO_PORT_STOP, hle_generic_ok);
 
-    resolve_import(0x342400, HLE_ADDR_AUDIO_PORT_CLOSE, toc);
+    resolve_import(0x3423F4, HLE_ADDR_AUDIO_PORT_CLOSE, toc);
     hle_register(HLE_ADDR_AUDIO_PORT_CLOSE, hle_generic_ok);
 
-    resolve_import(0x342420, HLE_ADDR_AUDIO_QUIT, toc);
+    resolve_import(0x342404, HLE_ADDR_AUDIO_QUIT, toc);
     hle_register(HLE_ADDR_AUDIO_QUIT, hle_generic_ok);
 
-    resolve_import(0x342410, HLE_ADDR_AUDIO_GET_PORT_CFG, toc);
+    resolve_import(0x3423FC, HLE_ADDR_AUDIO_GET_PORT_CFG, toc);
     hle_register(HLE_ADDR_AUDIO_GET_PORT_CFG, hle_generic_ok);
 
     // --- cellGame ---
-    resolve_import(0x3424C0, HLE_ADDR_GAME_BOOT_CHECK, toc);
+    resolve_import(0x3424A8, HLE_ADDR_GAME_BOOT_CHECK, toc);
     hle_register(HLE_ADDR_GAME_BOOT_CHECK, hle_game_boot_check);
 
-    resolve_import(0x342498, HLE_ADDR_GAME_CONTENT_PERMIT, toc);
+    resolve_import(0x342494, HLE_ADDR_GAME_CONTENT_PERMIT, toc);
     hle_register(HLE_ADDR_GAME_CONTENT_PERMIT, hle_game_content_permit);
 
-    resolve_import(0x3424A8, HLE_ADDR_GAME_GET_PARAM_INT, toc);
+    resolve_import(0x34249C, HLE_ADDR_GAME_GET_PARAM_INT, toc);
     hle_register(HLE_ADDR_GAME_GET_PARAM_INT, hle_generic_ok);
 
     // Register generic and silent OK handlers

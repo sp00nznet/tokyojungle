@@ -74,6 +74,9 @@ struct ElfLoadResult {
     uint32_t data_base;       // Start of data segment
     uint32_t data_size;       // Size of data segment (file)
     uint32_t bss_size;        // Size of BSS (memsz - filesz)
+    uint32_t tls_vaddr;       // PT_TLS image address (0 if none)
+    uint32_t tls_filesz;      // Initialised part of the TLS image
+    uint32_t tls_memsz;       // Full per-thread TLS block size
     bool success;
 };
 
@@ -134,6 +137,17 @@ static inline ElfLoadResult load_elf_into_vm(const char* elf_path)
         uint64_t p_vaddr  = be64(ph_raw + 16);
         uint64_t p_filesz = be64(ph_raw + 32);
         uint64_t p_memsz  = be64(ph_raw + 40);
+
+        // PT_TLS (7) describes the per-thread block, not something to map.
+        // Record it; main.cpp instantiates it and points r13 at it.
+        if (p_type == 7) {
+            result.tls_vaddr  = (uint32_t)p_vaddr;
+            result.tls_filesz = (uint32_t)p_filesz;
+            result.tls_memsz  = (uint32_t)p_memsz;
+            printf("[ELF] PT_TLS vaddr=0x%08X filesz=0x%X memsz=0x%X%c",
+                   result.tls_vaddr, result.tls_filesz, result.tls_memsz, 10);
+            continue;
+        }
 
         // Only load PT_LOAD segments with data
         if (p_type != 1) continue;  // PT_LOAD = 1
