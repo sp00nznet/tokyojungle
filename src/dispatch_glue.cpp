@@ -52,6 +52,7 @@ extern "C" volatile uint64_t g_indirect_call_count = 0;
  * dispatch-table + OPD resolution this wrapper delegated to, so defining our
  * own only duplicated the symbol. The counter it kept was diagnostic; the
  * runtime has its own instrumentation. */
+extern "C" void ps3_indirect_call(ppu_context* ctx);
 
 /* ---------------------------------------------------------------------------
  * Guest callback dispatch hook
