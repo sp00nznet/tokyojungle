@@ -56,12 +56,38 @@ set(PS3RECOMP_PPU_SOURCES
     "${PS3RECOMP_DIR}/runtime/ppu/ppu_fs.cpp"       # cellFs VFS
 )
 
+# Lifted SPU images + workload registration. The runtime's SPURS job dispatcher
+# matches a guest SPU image by content fingerprint and runs the lifted entry;
+# without a match it logs "[spurs-job] dispatch MISS" and runs nothing, and the
+# title blocks waiting for SPU work that never starts.
+#
+# These are NOT embedded SPU ELFs -- SPURS job binaries are raw code+data blobs
+# loaded from the game's data files. See src/gen/spu_workloads.c for how the
+# image was captured (SPU_DUMP_MISS) and lifted.
+option(TJ_ENABLE_SPU "Compile + register the title's lifted SPU images" ON)
+if(TJ_ENABLE_SPU)
+    file(GLOB TJ_SPU_LIFTED CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/generated/spu_lifted/*/spu_recomp.c")
+    list(LENGTH TJ_SPU_LIFTED N_TJ_SPU)
+    message(STATUS "lifted SPU images: ${N_TJ_SPU}")
+    set(TJ_SPU_SOURCES "${CMAKE_SOURCE_DIR}/src/gen/spu_workloads.c"
+        ${TJ_SPU_LIFTED})
+    # The lifted sources include "spu_context.h" relative to the runtime; scope
+    # the include to just these TUs so the huge PPU chunks keep their cached
+    # compile command.
+    set_source_files_properties(${TJ_SPU_SOURCES} PROPERTIES
+        INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu")
+else()
+    set(TJ_SPU_SOURCES "")
+endif()
+
 add_executable(tokyojungle
     src/main.cpp
     src/stubs.cpp
     src/dispatch_glue.cpp
     src/tj_crt_overrides.cpp
     src/tj_present.cpp
+    ${TJ_SPU_SOURCES}
     src/gen/ppu_hle_nids.cpp   # generated: NID -> ps3recomp lib handler
     ${PS3RECOMP_PPU_SOURCES}
     ${GENERATED_SOURCES}
