@@ -70,6 +70,7 @@ namespace tj_stubs {
 
 // Guest callback dispatch hook installer (defined in dispatch_glue.cpp)
 extern "C" void tj_install_guest_caller(void);
+extern "C" void tj_build_function_table(void);
 extern "C" void tj_install_watchdog(ppu_context* ctx);
 
 // Main PPU context
@@ -161,6 +162,9 @@ int main(int argc, char* argv[])
     // cellGcm vblank/flip handlers, save-data completion) can dispatch back
     // into recompiled guest code. Without this the main loop hangs on
     // vsync/flip and sysutil never fires events.
+    /* The runtime loader resolves indirect branches through
+     * function_table[]; build it from our dispatch table first. */
+    tj_build_function_table();
     tj_install_guest_caller();
     tj_install_watchdog(&g_main_ctx);
 

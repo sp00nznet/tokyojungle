@@ -43,46 +43,26 @@ extern uint8_t* vm_base;
  * All PS3 memory is big-endian; we swap on load/store.
  */
 
-static inline uint8_t vm_read8(uint64_t addr) {
-    return *(vm_base + (uint32_t)addr);
+/* Memory accessors are DECLARED here and defined in the runtime's
+ * ppu_loader.cpp, which is now part of this target. They used to be static
+ * inlines in this header; once the loader translation unit joined the build it
+ * saw both its own real definitions and these, and the two collided. The
+ * runtime's ppu_memory.h has a separate uint32_t-taking static-inline family
+ * for library code -- the lifted code wants this uint64_t one. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint8_t  vm_read8 (uint64_t addr);
+uint16_t vm_read16(uint64_t addr);
+uint32_t vm_read32(uint64_t addr);
+uint64_t vm_read64(uint64_t addr);
+void     vm_write8 (uint64_t addr, uint8_t  val);
+void     vm_write16(uint64_t addr, uint16_t val);
+void     vm_write32(uint64_t addr, uint32_t val);
+void     vm_write64(uint64_t addr, uint64_t val);
+#ifdef __cplusplus
 }
-
-static inline uint16_t vm_read16(uint64_t addr) {
-    uint16_t raw;
-    memcpy(&raw, vm_base + (uint32_t)addr, 2);
-    return ps3_bswap16(raw);
-}
-
-static inline uint32_t vm_read32(uint64_t addr) {
-    uint32_t raw;
-    memcpy(&raw, vm_base + (uint32_t)addr, 4);
-    return ps3_bswap32(raw);
-}
-
-static inline uint64_t vm_read64(uint64_t addr) {
-    uint64_t raw;
-    memcpy(&raw, vm_base + (uint32_t)addr, 8);
-    return ps3_bswap64(raw);
-}
-
-static inline void vm_write8(uint64_t addr, uint8_t val) {
-    *(vm_base + (uint32_t)addr) = val;
-}
-
-static inline void vm_write16(uint64_t addr, uint16_t val) {
-    uint16_t raw = ps3_bswap16(val);
-    memcpy(vm_base + (uint32_t)addr, &raw, 2);
-}
-
-static inline void vm_write32(uint64_t addr, uint32_t val) {
-    uint32_t raw = ps3_bswap32(val);
-    memcpy(vm_base + (uint32_t)addr, &raw, 4);
-}
-
-static inline void vm_write64(uint64_t addr, uint64_t val) {
-    uint64_t raw = ps3_bswap64(val);
-    memcpy(vm_base + (uint32_t)addr, &raw, 8);
-}
+#endif
 
 /*
  * 128-bit multiply helper for mulhd/mulhdu instructions.
@@ -130,8 +110,18 @@ static inline int __builtin_clzll(unsigned long long x) {
 }
 #endif
 
-/* LV2 syscall dispatch — uses the runtime's full dispatch table */
-#include "lv2_syscall_table.h"
+/* LV2 syscall dispatch. DECLARED, not included: the runtime's
+ * lv2_syscall_table.h defines lv2_syscall as a static inline, and
+ * ppu_loader.cpp -- now part of this target -- defines the real one. Pulling
+ * the header in here put both in that translation unit. The lifted code only
+ * needs the declaration; the loader supplies the body. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+void lv2_syscall(ppu_context* ctx);
+#ifdef __cplusplus
+}
+#endif
 
 /*
  * Indirect call dispatch.
@@ -140,6 +130,29 @@ static inline int __builtin_clzll(unsigned long long x) {
  * We dispatch through the function table instead.
  */
 typedef void (*recomp_func_t)(ppu_context* ctx);
+
+/* ps3recomp's ppu_loader.cpp resolves an indirect branch by scanning this
+ * table, mapping a host return address back to a guest one. It needs the
+ * COMPLETE type (it reads .addr/.func), so the definition lives here rather
+ * than in the generated tree -- generated/ppu_recomp.h includes this header,
+ * so the lifted code and the loader agree on one type.
+ *
+ * The lifter emits its own anonymous typedef plus a `static` table, both of
+ * which would fight this; scripts/post_lift.py removes the typedef and drops
+ * the `static` so the symbol is actually exported. */
+typedef struct func_entry {
+    uint64_t addr;
+    void (*func)(ppu_context*);
+    const char* name;
+} func_entry;
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern const func_entry function_table[];
+extern const uint64_t   function_table_count;
+#ifdef __cplusplus
+}
+#endif
 typedef struct dispatch_entry_t {
     uint32_t guest_addr;
     recomp_func_t host_func;

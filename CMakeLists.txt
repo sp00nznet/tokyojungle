@@ -67,6 +67,7 @@ add_executable(tokyojungle
 target_include_directories(tokyojungle PRIVATE
     # Our bridge header and game-specific code
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/compat   # <dirent.h>/<unistd.h> Win32 shims for ppu_fs.cpp
     # Generated code directory (ppu_recomp.h lives here)
     ${CMAKE_SOURCE_DIR}/generated
     # ps3recomp public headers (ps3emu/*.h)
