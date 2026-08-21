@@ -62,7 +62,7 @@ def patch_file(path):
             name = CRT_SKIPS[addr]
             out.append(lines[i])
             out.append('    %s: %s */\n' % (MARK, name))
-            out.append('    extern "C" void tj_crt_skip(ppu_context*, const char*);\n')
+            out.append('    extern void tj_crt_skip(ppu_context*, const char*);\n')
             out.append('    tj_crt_skip(ctx, "%s");\n' % name)
             out.append("}\n")
             patched.add(addr)

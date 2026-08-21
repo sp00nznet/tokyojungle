@@ -253,14 +253,34 @@ static void resolve_all_imports(uint32_t toc) {
     // =====================================================================
     // These share overlapping address ranges in the import table.
     // Cover the entire import table region to catch any we missed.
-    for (uint32_t slot = 0x3423E0; slot <= 0x342910; slot += 8) {
-        // Only write if the slot is still 0 (not already resolved)
+    int generic = 0;
+    // Stride 4, not 8: this is a table of 32-bit pointers. The stubs read it
+    // with lwz at consecutive word offsets (0x2818, 0x281C, 0x2820, ...), and
+    // resolve_import writes 32 bits. Stepping by 8 skipped every odd word --
+    // half the imports, including __sys_init_tls at 0x342834.
+    for (uint32_t slot = 0x3423E0; slot <= 0x342910; slot += 4) {
         uint32_t current = 0;
         memcpy(&current, vm_base + slot, 4);
-        if (current == 0) {
+        current = __builtin_bswap32(current);
+
+        // A slot is UNRESOLVED if it is zero, or if it still points into the
+        // code segment. The PS3 ELF pre-fills every import pointer with the
+        // address of the very stub that reads it -- lazy-binding placeholder,
+        // patched by the dynamic linker at load. Following one makes the stub
+        // read its own first instruction, li r12,0 == 0x39800000, as a code
+        // pointer and branch there.
+        //
+        // A resolved slot points at an HLE OPD at HLE_OPD_BASE, well above
+        // the code segment, so the range test cannot undo real resolutions.
+        bool unresolved = (current == 0) ||
+                          (current >= 0x00010000u && current < 0x00340000u);
+        if (unresolved) {
             resolve_import(slot, HLE_STUB_RETURN_OK, toc);
+            generic++;
         }
     }
+    printf("[HLE] %d import slots left unresolved by the ELF -> generic stub\n",
+           generic);
 
     printf("[HLE] Import table populated (%u OPDs created)\n",
            (g_next_opd - HLE_OPD_BASE) / 8);
