@@ -647,6 +647,9 @@ extern "C" {
     void _cellSpursJobChainAttributeInitialize(void);
     void cellSpursJobChainAttributeSetName(void);
     void cellSpursCreateJobChainWithAttribute(void);
+    void cellSpursJobGuardInitialize(void);
+    void cellSpursJobGuardNotify(void);
+    void cellSpursJobGuardReset(void);
     void cellSpursRunJobChain(void);
     void cellSpursJoinJobChain(void);
     void cellSpursJobChainGetError(void);
@@ -1682,6 +1685,9 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x3548F483u, "_cellSpursJobChainAttributeInitialize", (void*)_cellSpursJobChainAttributeInitialize);
     ps3_hle_register(0x9FEF70C2u, "cellSpursJobChainAttributeSetName", (void*)cellSpursJobChainAttributeSetName);
     ps3_hle_register(0x303C19CDu, "cellSpursCreateJobChainWithAttribute", (void*)cellSpursCreateJobChainWithAttribute);
+    ps3_hle_register(0x68AAEBA9u, "cellSpursJobGuardInitialize", (void*)cellSpursJobGuardInitialize);
+    ps3_hle_register(0xD5D0B256u, "cellSpursJobGuardNotify", (void*)cellSpursJobGuardNotify);
+    ps3_hle_register(0x00AF2519u, "cellSpursJobGuardReset", (void*)cellSpursJobGuardReset);
     ps3_hle_register(0xF31731BBu, "cellSpursRunJobChain", (void*)cellSpursRunJobChain);
     ps3_hle_register(0xA7C066DEu, "cellSpursJoinJobChain", (void*)cellSpursJoinJobChain);
     ps3_hle_register(0x161DA6A7u, "cellSpursJobChainGetError", (void*)cellSpursJobChainGetError);
