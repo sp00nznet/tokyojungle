@@ -671,6 +671,11 @@ static void prefer_ps3recomp_graphics(uint32_t toc) {
         }
         int idx = g_generic_count++;
         g_generic_slot[idx] = e->slot;
+        /* TJ_GENMAP=1: idx -> guest stub address -> name. The watchdog reports a
+         * wedged thread by CTR, and CTR lands in this generated table, so
+         * without the map a stuck import is just a bare address. */
+        if (getenv("TJ_GENMAP"))
+            printf("[genmap] 0x%08X %s\n", TJ_GENERIC_ADDR(idx), e->name);
         resolve_import(e->slot, TJ_GENERIC_ADDR(idx), toc);
         hle_register(TJ_GENERIC_ADDR(idx), hle_generic_named);
         moved++;
