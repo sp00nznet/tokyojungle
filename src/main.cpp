@@ -100,6 +100,14 @@ extern "C" void cellfs_add_path_mapping(const char* ps3_prefix, const char* host
 
 int main(int argc, char* argv[])
 {
+    /* The HLE libraries log with printf (stdout) while the guest tty and the
+     * runtime diagnostics go to stderr. Redirected to a file, stdout is BLOCK
+     * buffered, so a crash discards its tail -- the last few hundred lines
+     * before the fault, which are exactly the interesting ones. That made
+     * implemented calls look as though they had never happened. Unbuffer both
+     * so the log ends where the process did. */
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
     // Force unbuffered stdout for crash debugging
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
