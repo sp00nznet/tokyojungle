@@ -240,6 +240,7 @@ static void tj_peek(void)
 
 extern "C" int tj_crash_filter(unsigned long code)
 {
+    fflush(stdout); fflush(stderr);   /* buffered logs: don't lose the tail */
     tj_peek();
     void* bt[64];
     unsigned short n = RtlCaptureStackBackTrace(0, 64, bt, 0);

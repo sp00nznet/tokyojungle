@@ -106,8 +106,20 @@ int main(int argc, char* argv[])
      * before the fault, which are exactly the interesting ones. That made
      * implemented calls look as though they had never happened. Unbuffer both
      * so the log ends where the process did. */
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
+    /* Buffer both streams rather than leaving them unbuffered.
+     *
+     * Unbuffered stdio issues a separate write per conversion, so a printf with
+     * several %s/%x fields becomes several writes -- and with many guest threads
+     * logging at once, other threads land BETWEEN them. Lines were being split
+     * mid-token, e.g. "out of range b" + another thread's line + "us (1,1)",
+     * which silently defeats grep: a message that IS in the log reads as absent.
+     * That produced several wrong readings of this title's state before it was
+     * noticed. Buffered, each message is assembled in full before it goes out.
+     *
+     * The crash filter flushes, so a fault still shows the tail. */
+    static char out_buf[1 << 16], err_buf[1 << 16];
+    setvbuf(stdout, out_buf, _IOFBF, sizeof out_buf);
+    setvbuf(stderr, err_buf, _IOFBF, sizeof err_buf);
 
     /* main() has a __except, but GUEST THREADS do not -- a fault on one killed
      * the process with no report at all, which is how a crash during render
