@@ -312,6 +312,40 @@ int main(int argc, char* argv[])
                                   g_hle_dispatch[i].handler);
     }
 
+    /* TJ_POKE=<hexaddr>:<hexval>:<delay_ms> -- write one big-endian word into
+     * guest memory after a delay. A bring-up probe, not a fix: it answers
+     * "is this counter the only thing left holding the boot" without having to
+     * first work out who should have decremented it. Pair with FLOW_CONDKICK
+     * so a thread already inside cond_wait re-checks the value. */
+    if (const char* pk = getenv("TJ_POKE")) {
+        static char spec[128];
+        strncpy(spec, pk, sizeof spec - 1);
+        CreateThread(nullptr, 0, [](LPVOID p) -> DWORD {
+            /* Semicolon-separated list: a guest handshake usually has more than
+             * one gate (an inner counter AND an outer flag), and clearing only
+             * one just moves the block. */
+            const char* s = (const char*)p;
+            unsigned first_ms = 3000;
+            { unsigned a0=0,v0=0; sscanf(s, "%x:%x:%u", &a0, &v0, &first_ms); }
+            Sleep(first_ms);
+            while (s && *s) {
+                unsigned addr = 0, val = 0, ms = 0;
+                if (sscanf(s, "%x:%x:%u", &addr, &val, &ms) >= 2) {
+                    extern uint8_t* vm_base;
+                    if (vm_base && addr) {
+                        uint8_t* q = vm_base + addr;
+                        q[0] = (uint8_t)(val >> 24); q[1] = (uint8_t)(val >> 16);
+                        q[2] = (uint8_t)(val >> 8);  q[3] = (uint8_t)val;
+                        fprintf(stderr, "[TJ] poked guest 0x%08X = 0x%08X\n", addr, val);
+                    }
+                }
+                const char* semi = strchr(s, 59);
+                s = semi ? semi + 1 : 0;
+            }
+            return 0u;
+        }, (LPVOID)spec, 0, nullptr);
+    }
+
     /* TJ_OPD_GUARD=1: write-protect the HLE OPD arena once it is built.
      * The arena is correct at startup (verified by peek) but some entries read
      * back as zero later, so an import that worked earlier starts dispatching
