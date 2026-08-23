@@ -14,51 +14,89 @@ So we're doing it ourselves.
 
 **Tokyo Jungle Recompiled** is a native PC port built using [ps3recomp](https://github.com/sp00nznet/ps3recomp) — a static recompilation toolchain that translates PS3 PowerPC binaries into native C code, then compiles them as x86-64 executables. No emulation at runtime. No compatibility layers. Just raw, recompiled native code.
 
-## Status: Phase 7 — Game Runs Through Main, Iterating Game Loop
+## Status: Phase 8 — Boots to a Window, Audio Initialises, Geometry Not Yet Drawing
 
-> **This is the first 3D title to attempt ps3recomp.** The game now runs end-to-end through CRT init, _cellGcmInitBody, and into the main game loop, alive indefinitely. 35,208 PPU functions lifted, 1 unmapped indirect-call site remaining. Adapted to ps3recomp v0.5.1.
+> **This is the first 3D title to attempt ps3recomp.** The game boots end-to-end,
+> opens a D3D12 window, runs its PSN data-install flow, brings up SPURS and the
+> SPU job manager, and completes audio initialisation. Its own clear colour
+> reaches the screen. It does not yet draw geometry.
+
+**A note on the function count.** Earlier builds advertised *35,208 lifted
+functions*. That number was wrong, and the current one is lower on purpose:
+`find_functions` was treating intra-function basic blocks as separate function
+entries, inventing tens of thousands of phantoms. It now covers those blocks
+properly. The fix was checked against ground truth on a *different* title that
+ships an unstripped debug build (+90 real functions recovered, 0 phantoms
+introduced) — Tokyo Jungle's own binary is stripped, so its count cannot be
+verified directly. The honest figure is **7,924**. A count going down was progress.
 
 | Milestone | Status |
 |-----------|--------|
-| Binary analysis & function discovery | **Done** — 35,208 functions (find_functions + OPD scan) |
-| PPU disassembly & code lifting | **Done** — ps3recomp v0.5.1 lifter, 4 body overrides |
-| Project scaffold & build system | **Done** — 32MB native exe, MSVC + Visual Studio 2022 |
-| ELF loading & VM setup | **Done** — 4GB address space, segments loaded |
-| CRT initialization | **Done** — _start through __libc_start, 11 CRT stubs |
-| LV2 syscall dispatch | **Done** — Full dispatch table, TTY, memory, threading |
-| Import table resolution (PLT/NID) | **Done** — 318 NIDs, 61 HLE handlers, OPD patching |
-| Vtable / OPD-only function discovery | **Done** — scripts/scan_opds.py recovers 1,897 fns |
-| Guest callback dispatch hook | **Done** — `g_ps3_guest_caller` → tj_guest_caller |
-| Game init (game_init) | **Done** — Past _cellGcmInitBody, into main loop |
-| RIP-resolving watchdog | **Done** — `tj_install_watchdog` for diagnosing hangs |
-| HLE module stubs (cellGcm, cellPad, etc.) | **In Progress** — silent-ok for many, real impls needed |
-| Graphics backend (RSX → D3D12) | **In Progress** — upstream has D3D12 backend, not wired in |
-| Audio (cellAudio → WASAPI/SDL) | Not Started |
+| Binary analysis & function discovery | **Done** — 7,924 functions, ground-truth verified |
+| PPU disassembly & code lifting | **Done** — 7 body overrides (heap, abort, pure-virtual) |
+| Project scaffold & build system | **Done** — clang-cl + Ninja |
+| ELF loading & VM setup | **Done** — 4 GB space, 256 MB VRAM, callback stacks, GCM page |
+| CRT initialization | **Done** — argv, TLS (`r13`), guest heap redirected |
+| LV2 syscall dispatch | **Done** — plus `PS3_SCTRACE` with guest-caller resolution |
+| Import table resolution (PLT/NID) | **Done** — slots derived from the module descriptors |
+| Guest threads | **Done** — thread entry trampoline (every thread was a silent no-op) |
+| Graphics backend (RSX → D3D12) | **Partial** — window opens, clears present, no geometry |
+| PSN data-install flow | **Done** — DataCheck / CreateGameData handshake completes |
+| SPU job manager (SPURS) | **Partial** — chains walk, job guards work, 1 of 12 images lifted |
+| Audio (cellAudio) | **Partial** — init / PortOpen / PortStart succeed, no output device yet |
 | Input (cellPad → XInput/SDL) | Not Started |
-| SPU task handling | Not Started |
 | Survival Mode playable | Not Started |
 | Story Mode playable | Not Started |
 | DLC species support | Not Started |
 
 ### What's Working
 
-- **35,208 PPU functions** statically recompiled to native C++ and compiled to x86-64
-- **ps3recomp v0.5.1 runtime** — D3D12 backend available, RSX command processor, FIFO watchdog, real `cellSaveData` / `cellSysutil` / `cellGcmSys` implementations
-- **OPD-scan pass** (`scripts/scan_opds.py`) recovers vtable-only functions the lifter doesn't discover statically
-- **Guest callback dispatch** (`g_ps3_guest_caller`) — HLE bridges can fire guest callbacks for sysutil events / vblank / save-data completion
-- **CRT initialization** chain runs cleanly (argc/argv setup, TLS, heap, SPU stubs)
-- **Import resolution** for all 24 PS3 modules
-- **Indirect call dispatch** through function pointer tables and vtables (OPD fallback + linear HLE search + binary-search dispatch table)
-- **LV2 syscall handling** for threading, memory, filesystem, events
-- **Game initialization** completes — subsystem init, _cellGcmInitBody, main loop entered
-- **Watchdog tooling** — RIP-to-guest-function resolver and call-rate sampling for diagnosing guest spins
+- **7,924 PPU functions** recompiled to native C++ and compiled to x86-64
+- **A window with the game's own pixels in it** — `CELL_GCM` `CLEAR_SURFACE` reaches
+  the D3D12 backend and presents; the frame colour is the guest's, not ours
+- **The PS3 data-install flow** — the title's installer runs to completion, which
+  needed all three of ps3recomp's independent path roots configured (`sys_fs`
+  syscalls, the `cellFs` HLE prefix table, and `cellGame`'s content path)
+- **Guest threads actually run** — `ppu_install_thread_trampoline`; without it every
+  `sys_ppu_thread_create` thread spawned, reported FINISHED, and executed nothing
+- **SPURS job chains** — the walker handles JOB / SYNC / NEXT / GUARD, and job
+  guards are implemented, so a chain waits for its notify instead of running
+  against parameters the game has not filled in yet
+- **One SPU image lifted and dispatched** — the "soc-job" sound down-mix chain,
+  captured with `SPU_DUMP_MISS` and matched by content fingerprint
+- **Audio initialisation** — `cellAudioInit`, `cellAudioPortOpen`,
+  `cellAudioSetNotifyEventQueue` and `cellAudioPortStart` all complete
+- **Diagnostics that earn their keep** — `TJ_GENMAP` (stub address → import name),
+  `TJ_OPD_GUARD` (write-protect the OPD arena), `PS3_SCTRACE`, `TJ_IMPTRACE`,
+  and a watchdog that resolves a wedged thread back to a guest function
 
 ### Current Blockers
 
-- **No renderer** — RSX commands aren't being submitted; game runs the loop but draws nothing (upstream D3D12 backend is built but not yet wired into TJ)
-- **Many NULL indirect calls** — late-init phase iterates a vtable region (`0x003CCxxx`) where the vtable hasn't been populated. Guarded (returns r3=0) but indicates a missing constructor or HLE bridge
-- **One unmapped call** at `0x00041920` — only remaining static-discovery gap
-- **No input/audio/graphics output** — backends not wired
+- **No geometry** — the frame clears and presents, but nothing is drawn into it.
+  This is the headline problem and the next thing to solve.
+- **11 of 12 SPU images are unlifted** — the title dispatches ~100 SPU jobs across
+  12 distinct images per run and only the sound job is implemented; the rest log
+  `dispatch MISS` and return without doing anything
+- **A crash shortly after `cellGcmMapMainMemory`**, i.e. once audio init stops
+  blocking the boot and the game reaches render setup
+- **`cellFont` is held back** on the title's own stubs (`TJ_KEEP='cellFont*'`), so
+  no UI text renders
+
+### Recently Fixed
+
+Two bugs worth naming, because both spent a long time wearing a convincing disguise:
+
+- **`cellAudioPortOpen` was allocating its audio buffer on top of the HLE OPD arena.**
+  It used a hardcoded `0x01000000`, commented "free window" — which is exactly where
+  this port keeps its import descriptor table. Opening an audio port `memset` 128 KB
+  of it to zero, after which every import resolved through those descriptors
+  dispatched to a null address. A null `bctr` returns *with r3 untouched*, so the
+  guest reads its own first argument back as a status code. The middleware duly
+  reported `failed to set notify queue (23A0)` — and `0x23A0` was not an error code
+  at all, it was the event-queue key it had just passed in.
+- **SPURS never signalled the application.** `cellSpursAttachLv2EventQueue` discarded
+  the queue id, so a thread blocked in `sys_event_queue_receive` waiting for job
+  completion could never be woken. The title sat there for its entire boot.
 
 ## How It Works
 
@@ -71,7 +109,7 @@ Generated C source code (thousands of files)
     ↓ compile with MSVC/GCC/Clang
 Native x86-64 executable
     + ps3recomp runtime (HLE OS services)
-    + Graphics backend (RSX → Vulkan)
+    + Graphics backend (RSX → D3D12)
     + Audio/Input backends
     ↓
 Tokyo Jungle on your PC
@@ -146,7 +184,7 @@ tokyojungle/
 │   └── add_traces.py           # Debug tracing for game functions
 ├── input/                      # Your game files go here (gitignored)
 ├── generated/                  # Recompiled C output (~150MB, gitignored)
-│   ├── ppu_recomp.c            # 35,210 lifted PPU functions
+│   ├── ppu_recomp_0NN.cpp      # 7,924 lifted PPU functions
 │   ├── ppu_recomp.h            # Function declarations
 │   ├── ppu_stubs.c             # Manual CRT overrides (_start, init stubs)
 │   ├── dispatch_table.c        # Guest addr -> host func lookup table
@@ -161,8 +199,11 @@ tokyojungle/
 
 This is an ambitious preservation project and help is very welcome. The biggest areas of need:
 
-- **RSX Graphics Reverse Engineering** — Understanding Tokyo Jungle's rendering pipeline and building the Vulkan translation layer
-- **SPU Program Analysis** — Identifying and reimplementing SPU tasks (likely audio processing, physics, particle systems)
+- **RSX Graphics Reverse Engineering** — Working out why the game's draw calls never reach the D3D12 backend. The frame clears and presents correctly, so the path is open; something upstream is not submitting geometry.
+- **SPU Program Analysis** — The title dispatches around 100 SPU jobs per run across
+  12 distinct images, and only one ("soc-job", the sound down-mix) is lifted. The
+  others are raw SPURS job binaries loaded from the game's own data files, so they
+  have to be captured at runtime with `SPU_DUMP_MISS` before they can be lifted.
 - **Game Logic Debugging** — Once code is lifted, tracking down crashes and behavioral bugs
 - **Testing** — Comparing behavior against RPCS3 reference runs
 
