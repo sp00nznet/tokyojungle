@@ -209,6 +209,12 @@ This is an ambitious preservation project and help is very welcome. The biggest 
 
 If you've worked with PS3 internals, RPCS3, N64Recomp, or similar recompilation projects, your expertise would be invaluable.
 
+## License
+
+The code in this repository is MIT licensed — see [LICENSE](LICENSE). That covers
+*our* code only: the port scaffold, HLE glue, and build scripts. It does not and
+cannot cover Tokyo Jungle itself, and no game data is included here.
+
 ## Legal
 
 This project is a clean-room recompilation toolchain output. It does not contain any proprietary Sony or game code. You must provide your own legally obtained game files. This project exists solely for game preservation purposes.
