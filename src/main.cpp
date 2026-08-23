@@ -108,6 +108,57 @@ int main(int argc, char* argv[])
      * so the log ends where the process did. */
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+
+    /* main() has a __except, but GUEST THREADS do not -- a fault on one killed
+     * the process with no report at all, which is how a crash during render
+     * setup looked like the log simply stopping mid-line. A process-wide filter
+     * covers every thread, and prints the faulting address and access type that
+     * the __except path never had. */
+    /* Commit guest pages on first touch, like the boot harness does
+     * (vm_commit_veh in runtime/ppu/tests/boot_main.cpp). A port with its own
+     * main() never got that, so ANY guest access to a page nobody had committed
+     * killed the process outright -- while the same access under the harness
+     * just worked. That asymmetry is why this title died at guest 0x10F000B4.
+     *
+     * TJ_NO_FAULT_COMMIT=1 disables it when you want the fault to stand. Commits
+     * are logged, because a page the guest touches that nothing ever allocated
+     * is still worth knowing about -- this makes it survivable, not invisible. */
+    if (!getenv("TJ_NO_FAULT_COMMIT"))
+    AddVectoredExceptionHandler(1, [](EXCEPTION_POINTERS* ep) -> LONG {
+        const EXCEPTION_RECORD* er = ep->ExceptionRecord;
+        if (er->ExceptionCode != EXCEPTION_ACCESS_VIOLATION ||
+            er->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
+        uintptr_t at = (uintptr_t)er->ExceptionInformation[1];
+        extern uint8_t* vm_base;
+        if (!vm_base || at < (uintptr_t)vm_base ||
+            at >= (uintptr_t)vm_base + 0x100000000ull) return EXCEPTION_CONTINUE_SEARCH;
+        void* page = (void*)(at & ~(uintptr_t)0xFFFF);
+        if (!VirtualAlloc(page, 0x10000, MEM_COMMIT, PAGE_READWRITE))
+            return EXCEPTION_CONTINUE_SEARCH;
+        static LONG n = 0;
+        if (InterlockedIncrement(&n) <= 24)
+            fprintf(stderr, "[TJ] faulted in guest page 0x%08X (%s) -- committed\n",
+                    (uint32_t)(((uintptr_t)page - (uintptr_t)vm_base)),
+                    er->ExceptionInformation[0] == 1 ? "write" : "read");
+        return EXCEPTION_CONTINUE_EXECUTION;
+    });
+
+    SetUnhandledExceptionFilter([](EXCEPTION_POINTERS* ep) -> LONG {
+        const EXCEPTION_RECORD* er = ep->ExceptionRecord;
+        if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2) {
+            const char* how = er->ExceptionInformation[0] == 0 ? "read"
+                            : er->ExceptionInformation[0] == 1 ? "write" : "execute";
+            uintptr_t at = (uintptr_t)er->ExceptionInformation[1];
+            extern uint8_t* vm_base;
+            fprintf(stderr, "\n[TJ] ACCESS VIOLATION: %s at host 0x%llX", how,
+                    (unsigned long long)at);
+            if (vm_base && at >= (uintptr_t)vm_base && at < (uintptr_t)vm_base + 0x100000000ull)
+                fprintf(stderr, " = GUEST 0x%08X", (uint32_t)(at - (uintptr_t)vm_base));
+            fprintf(stderr, " (thread %lu)\n", GetCurrentThreadId());
+        }
+        tj_crash_filter(er->ExceptionCode);
+        return EXCEPTION_EXECUTE_HANDLER;
+    });
     // Force unbuffered stdout for crash debugging
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
@@ -189,6 +240,11 @@ int main(int argc, char* argv[])
         cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/", "");
         cellfs_add_path_mapping("/dev_hdd0/game/NPUA80523/", "");
         cellfs_add_path_mapping("/app_home/", "");
+    /* The installed game data lives beside the exe, NOT under PS3_VFS_ROOT, so
+     * point the hdd root at it explicitly -- cellFs joins host paths under the
+     * root. The title stats /dev_hdd0 to confirm the device is there and spins
+     * forever if it is not. */
+    cellfs_add_path_mapping("/dev_hdd0/", "../gamedata/dev_hdd0/");
         printf("[TJ] cellFs root=\"%s\" (disc + hdd game dirs -> USRDIR/)\n", vfs);
     }
 
