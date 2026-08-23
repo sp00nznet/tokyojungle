@@ -256,6 +256,20 @@ int main(int argc, char* argv[])
                                   g_hle_dispatch[i].handler);
     }
 
+    /* TJ_OPD_GUARD=1: write-protect the HLE OPD arena once it is built.
+     * The arena is correct at startup (verified by peek) but some entries read
+     * back as zero later, so an import that worked earlier starts dispatching
+     * to a null address -- and a null bctr returns leaving r3 untouched, which
+     * the guest reads as a garbage error code. Nothing should write here after
+     * resolution, so a fault names the culprit via the crash filter. */
+    if (getenv("TJ_OPD_GUARD")) {
+        DWORD old = 0;
+        if (VirtualProtect(vm_base + 0x01000000u, 0x10000u, PAGE_READONLY, &old))
+            printf("[TJ] OPD arena 0x01000000+0x10000 is now read-only\n");
+        else
+            printf("[TJ] OPD guard failed (err %lu)\n", GetLastError());
+    }
+
     // 3. Initialize PPU context
     ppu_context_init(&g_main_ctx);
     uint32_t stack_size = 1024 * 1024;

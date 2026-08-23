@@ -580,7 +580,16 @@ extern "C" void ps3_hle_call(unsigned int nid, ppu_context* ctx);
 static void hle_generic_named(ppu_context* ctx) {
     static unsigned char seen[TJ_GENERIC_MAX];
     uint32_t idx = ((uint32_t)ctx->ctr - TJ_GENERIC_BASE) / 4u;
-    if (idx >= TJ_GENERIC_MAX) { ctx->gpr[3] = 0; return; }
+    if (idx >= TJ_GENERIC_MAX) {
+        /* Was a SILENT return-success. If ctr is not one of our stub addresses
+         * the index is garbage, and reporting CELL_OK for a call we never made
+         * is the worst possible answer -- the guest believes it succeeded. */
+        static int n = 0;
+        if (n++ < 16)
+            printf("[HLE] generic dispatch with ctr=0x%08X (idx %u out of range)\n",
+                   (uint32_t)ctx->ctr, idx);
+        ctx->gpr[3] = 0; return;
+    }
 
     uint32_t slot = g_generic_slot[idx];
     uint32_t nid  = tj_import_nid(slot);
