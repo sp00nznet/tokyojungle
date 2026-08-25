@@ -53,11 +53,27 @@ void hle_heap_init() {
            g_heap_base, g_heap_end, (g_heap_end - g_heap_base) / (1024*1024));
 }
 
+/* The guest heap spans 0x02000000-0x08000000, and the GCM control block the
+ * RSX pump reads put/get/ref from sits at 0x03002000 -- INSIDE it. Nothing
+ * stopped an allocation from landing on top of it, and one does: this title
+ * loads an 8,995,536-byte sound bank at 0x02984790, which runs to 0x03219360
+ * and buries the control registers. The pump then reads put=0x2700E02D and
+ * ref=0xF0F0F00F -- sound data -- and anything waiting on a fence waits
+ * forever. Skip the region instead. */
+#define TJ_GCM_CTRL_LO  0x03000000u
+#define TJ_GCM_CTRL_HI  0x03010000u
+
 uint32_t hle_malloc(uint32_t size) {
     if (!g_heap_inited) hle_heap_init();
     // Align to 16 bytes
     size = (size + 15) & ~15u;
     if (size == 0) size = 16;
+
+    /* Jump the reserved GCM window if this block would straddle it. */
+    if (g_heap_ptr < TJ_GCM_CTRL_HI && g_heap_ptr + size > TJ_GCM_CTRL_LO) {
+        printf("[HLE] heap: skipping GCM control window for a %u-byte block\n", size);
+        g_heap_ptr = TJ_GCM_CTRL_HI;
+    }
 
     uint32_t addr = g_heap_ptr;
     g_heap_ptr += size;
