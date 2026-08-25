@@ -67,7 +67,12 @@ void     hle_free(uint32_t addr);
 static void tj_heap_log(const char* what, uint32_t a, uint32_t b, uint32_t r)
 {
     static int hits;
-    if (hits < 24) { printf("[heap] %s(0x%X, 0x%X) -> 0x%08X\n", what, a, b, r); hits++; }
+    /* Always log a LARGE allocation, however late it happens. A bump
+     * allocator cannot hand out overlapping blocks, so when two buffers appear
+     * to overlap the question is which one did NOT come from here -- and the
+     * big ones are the ones worth being sure about. */
+    if (hits < 24 || a >= 0x100000) {
+        printf("[heap] %s(0x%X, 0x%X) -> 0x%08X\n", what, a, b, r); hits++; }
 }
 
 void tj_heap_malloc(ppu_context* ctx)
