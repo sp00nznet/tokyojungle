@@ -152,6 +152,9 @@ extern "C" void tj_install_guest_caller(void)
 
 #include <windows.h>
 
+extern "C" const char* g_hle_inflight[];   /* ppu_hle.cpp: in-flight HLE per guest thread */
+extern "C" uint32_t    g_sc_inflight[];   /* ppu_loader.cpp: in-flight lv2 syscall */
+
 static volatile ppu_context* g_watchdog_ctx = nullptr;
 static HANDLE g_watchdog_main_thread = NULL;
 
@@ -203,16 +206,23 @@ static DWORD WINAPI tj_watchdog_thread(LPVOID)
         if (guest == last_guest) stuck_count++; else stuck_count = 0;
         last_guest = guest;
 
+        /* The HLE the main thread is INSIDE right now. CTR is the last bctrl
+         * target, which goes stale the moment a call returns -- it kept naming
+         * sys_lwmutex_unlock for a thread that had long since left it. */
+        const char* in_hle = g_hle_inflight[0];
+
         fprintf(stderr,
             "[WATCHDOG #%d] guest=func_%08X+0x%llX RIP=0x%llX  "
             "LR=0x%08llX CTR=0x%08llX SP=0x%08llX r3=0x%llX r4=0x%llX "
-            "bctrl/2s=%llu%s\n",
+            "bctrl/2s=%llu in_hle=%s syscall=%u%s\n",
             sample++, guest, (unsigned long long)off,
             (unsigned long long)hc.Rip,
             (unsigned long long)lr, (unsigned long long)ctr,
             (unsigned long long)sp,
             (unsigned long long)r3, (unsigned long long)r4,
             (unsigned long long)calls_delta,
+            in_hle ? in_hle : (g_sc_inflight[0] ? "(in syscall)" : "(none -- in guest code)"),
+            g_sc_inflight[0],
             stuck_count > 1 ? "  [STUCK]" : "");
         fflush(stderr);
         if (sample > 30) break;
