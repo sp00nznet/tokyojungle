@@ -91,6 +91,7 @@ extern "C" void ppu_register_function(uint64_t, void (*)(ppu_context*));
 extern "C" void ppu_hle_register_all(void);
 extern "C" void ppu_sysprx_register(void);
 extern "C" int  tj_crash_filter(unsigned long code);
+extern "C" void ps3_install_guest_ptr_trap(void);
 extern "C" void tj_start_present_thread(void);
 extern "C" unsigned int ps3_hle_count(void);
 extern "C" void ppu_recomp_register(void);
@@ -118,6 +119,7 @@ int main(int argc, char* argv[])
      *
      * The crash filter flushes, so a fault still shows the tail. */
     static char out_buf[1 << 16], err_buf[1 << 16];
+    ps3_install_guest_ptr_trap();
     setvbuf(stdout, out_buf, _IOFBF, sizeof out_buf);
     setvbuf(stderr, err_buf, _IOFBF, sizeof err_buf);
 
@@ -261,11 +263,21 @@ int main(int argc, char* argv[])
         cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/", "");
         cellfs_add_path_mapping("/dev_hdd0/game/NPUA80523/", "");
         cellfs_add_path_mapping("/app_home/", "");
-    /* The installed game data lives beside the exe, NOT under PS3_VFS_ROOT, so
-     * point the hdd root at it explicitly -- cellFs joins host paths under the
-     * root. The title stats /dev_hdd0 to confirm the device is there and spins
-     * forever if it is not. */
-    cellfs_add_path_mapping("/dev_hdd0/", "../gamedata/dev_hdd0/");
+    /* Point the hdd root at the installed game data -- cellFs joins host paths
+     * under the root. The title stats /dev_hdd0 to confirm the device is there
+     * and spins forever if it is not: it prints
+     *
+     *     waiting for device mounting... (/dev_hdd0)
+     *
+     * and its main thread never returns to the render loop, so the boot gets
+     * three clears and then nothing.
+     *
+     * This is relative to the WORKING DIRECTORY, which is the project root --
+     * the same assumption elf_path = "input/EBOOT.ELF" below already makes.
+     * It used to read "../gamedata/dev_hdd0/", which is where the data sits
+     * relative to the exe in build/, and resolved one level too high whenever
+     * the program was run the way its own ELF path requires. */
+    cellfs_add_path_mapping("/dev_hdd0/", "gamedata/dev_hdd0/");
         printf("[TJ] cellFs root=\"%s\" (disc + hdd game dirs -> USRDIR/)\n", vfs);
     }
 

@@ -63,3 +63,7 @@ build_*/
 # Stale parallel project tree from an earlier bring-up attempt (359 MB,
 # contains its own build/ and meta/). Not part of the current pipeline.
 project/
+
+# build trees and run logs (build-g/, trap.log from a crash run)
+build-*/
+trap.log
