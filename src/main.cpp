@@ -324,6 +324,51 @@ int main(int argc, char* argv[])
                                   g_hle_dispatch[i].handler);
     }
 
+    /* TJ_SCAN=<text>[:<delay_ms>] -- after a delay, search committed guest
+     * memory for a literal and report every hit. Answers "did anything copy
+     * this data anywhere?", which is otherwise very hard to establish: a
+     * single hit means the only copy is the one we put there, several means
+     * something parsed or staged it. */
+    if (const char* sc = getenv("TJ_SCAN")) {
+        static char spec[128];
+        strncpy(spec, sc, sizeof spec - 1);
+        CreateThread(nullptr, 0, [](LPVOID pv) -> DWORD {
+            char* s = (char*)pv;
+            unsigned ms = 20000;
+            char* colon = strrchr(s, 58);
+            if (colon && colon[1]) { ms = (unsigned)atoi(colon + 1); *colon = 0; }
+            Sleep(ms);
+            extern uint8_t* vm_base;
+            /* A leading "0x" means search for those BYTES (big-endian), which is
+             * how you ask "does anything hold a pointer to this buffer?" */
+            char pat[64]; size_t n;
+            if (s[0] == 48 && (s[1] == 120 || s[1] == 88)) {
+                n = 0;
+                for (const char* h = s + 2; h[0] && h[1] && n < sizeof pat; h += 2) {
+                    unsigned byte = 0; sscanf(h, "%2x", &byte);
+                    pat[n++] = (char)byte;
+                }
+                s = pat;
+            } else n = strlen(s);
+            if (!vm_base || !n) return 0u;
+            int hits = 0;
+            fprintf(stderr, "[TJ:scan] searching guest memory for %s\"%s%s\"%s\n", "", s, "", "");
+            for (uint64_t a2 = 0x10000; a2 + n < 0x10000000ull && hits < 24; a2 += 1) {
+                MEMORY_BASIC_INFORMATION mbi;
+                if ((a2 & 0xFFFF) == 0) {
+                    if (!VirtualQuery(vm_base + a2, &mbi, sizeof mbi) ||
+                        mbi.State != MEM_COMMIT) { a2 += 0xFFFC; continue; }
+                }
+                if (memcmp(vm_base + a2, s, n) == 0) {
+                    fprintf(stderr, "[TJ:scan]   hit at guest 0x%08X\n", (uint32_t)a2);
+                    hits++;
+                }
+            }
+            fprintf(stderr, "[TJ:scan] %d hit(s)\n", hits);
+            return 0u;
+        }, (LPVOID)spec, 0, nullptr);
+    }
+
     /* TJ_POKE=<hexaddr>:<hexval>:<delay_ms> -- write one big-endian word into
      * guest memory after a delay. A bring-up probe, not a fix: it answers
      * "is this counter the only thing left holding the boot" without having to
