@@ -70,7 +70,7 @@ uint32_t hle_malloc(uint32_t size) {
     if (size == 0) size = 16;
 
     /* Jump the reserved GCM window if this block would straddle it. */
-    if (g_heap_ptr < TJ_GCM_CTRL_HI && g_heap_ptr + size > TJ_GCM_CTRL_LO) {
+    if (!getenv("TJ_NO_GCM_SKIP") && g_heap_ptr < TJ_GCM_CTRL_HI && g_heap_ptr + size > TJ_GCM_CTRL_LO) {
         printf("[HLE] heap: skipping GCM control window for a %u-byte block\n", size);
         g_heap_ptr = TJ_GCM_CTRL_HI;
     }
