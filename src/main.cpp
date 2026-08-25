@@ -145,6 +145,15 @@ int main(int argc, char* argv[])
         if (!vm_base || at < (uintptr_t)vm_base ||
             at >= (uintptr_t)vm_base + 0x100000000ull) return EXCEPTION_CONTINUE_SEARCH;
         void* page = (void*)(at & ~(uintptr_t)0xFFFF);
+        /* NOTE: this commits ANY faulting page in the VM range, including one
+         * that is already committed but deliberately protected. That silently
+         * defeats TJ_OPD_GUARD -- the guard reports "armed" and never fires,
+         * and its silence must NOT be read as proof the region was untouched.
+         *
+         * Skipping committed pages here was tried and REVERTED: it makes even
+         * unguarded runs segfault, so the title legitimately faults on pages
+         * that are already committed. Fixing the guard properly needs a
+         * narrower mechanism than this handler. */
         if (!VirtualAlloc(page, 0x10000, MEM_COMMIT, PAGE_READWRITE))
             return EXCEPTION_CONTINUE_SEARCH;
         static LONG n = 0;
