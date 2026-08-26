@@ -19,6 +19,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 
 #include "ppu_context.h"
 #include "recomp_bridge.h"
@@ -211,10 +212,42 @@ static DWORD WINAPI tj_watchdog_thread(LPVOID)
          * sys_lwmutex_unlock for a thread that had long since left it. */
         const char* in_hle = g_hle_inflight[0];
 
+        /* TJ_POLLWATCH=0x198: the main loop parks polling a counter at
+         * [r31+OFF] (func_00213A14 waits for outstanding requests to reach
+         * zero). Print r31 and that word so a stuck wait says WHAT it is
+         * waiting on, instead of just where. */
+        uint64_t r31 = c->gpr[31];
+        char pollbuf[64] = "";
+        { static long off = -1;
+          if (off < 0) { const char* e = getenv("TJ_POLLWATCH");
+                         off = e ? strtol(e, nullptr, 0) : 0; }
+          if (off > 0 && r31 && r31 < 0x100000000ull)
+              snprintf(pollbuf, sizeof pollbuf, " r31=0x%08X [r31+0x%lX]=%u",
+                       (uint32_t)r31, off, vm_read32((uint32_t)r31 + (uint32_t)off));
+        }
+
+        /* TJ_TIMEWATCH: the game's own clock, [[TOC+0x1860]+0x18]. func_00205E6C
+         * returns it, and the main loop waits for it to pass a stored value + 3.
+         * If it never advances, that wait is forever. */
+        char timebuf[128] = "";
+        if (getenv("TJ_TIMEWATCH")) {
+            uint32_t obj = vm_read32(0x00359220u + 0x1860u);
+            /* [TOC+0x154C] is the object the VBLANK handler ticks (+0x8/+0x10/
+             * +0x14); [TOC+0x1860]+0x18 is the clock the main loop waits on.
+             * Printing both says whether the game has any advancing time at
+             * all, or just this one field stuck. */
+            uint32_t vb = vm_read32(0x00359220u + 0x154Cu);
+            if (obj) snprintf(timebuf, sizeof timebuf,
+                              " gameclock[0x%08X]=%llu vbobj=0x%08X vb+0x14=%u",
+                              obj + 0x18, (unsigned long long)vm_read64(obj + 0x18),
+                              vb, vb ? vm_read32(vb + 0x14) : 0);
+            else     snprintf(timebuf, sizeof timebuf, " gameclock=<obj null>");
+        }
+
         fprintf(stderr,
             "[WATCHDOG #%d] guest=func_%08X+0x%llX RIP=0x%llX  "
             "LR=0x%08llX CTR=0x%08llX SP=0x%08llX r3=0x%llX r4=0x%llX "
-            "bctrl/2s=%llu in_hle=%s syscall=%u%s\n",
+            "bctrl/2s=%llu in_hle=%s syscall=%u%s%s%s\n",
             sample++, guest, (unsigned long long)off,
             (unsigned long long)hc.Rip,
             (unsigned long long)lr, (unsigned long long)ctr,
@@ -223,6 +256,8 @@ static DWORD WINAPI tj_watchdog_thread(LPVOID)
             (unsigned long long)calls_delta,
             in_hle ? in_hle : (g_sc_inflight[0] ? "(in syscall)" : "(none -- in guest code)"),
             g_sc_inflight[0],
+            pollbuf,
+            timebuf,
             stuck_count > 1 ? "  [STUCK]" : "");
         fflush(stderr);
         if (sample > 30) break;
