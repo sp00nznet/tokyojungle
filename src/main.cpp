@@ -260,9 +260,23 @@ int main(int argc, char* argv[])
          * stats /dev_bdvd/PS3_GAME/ICON0.PNG and friends, and a USRDIR-only
          * mapping sent those to the default gamedata/dev_bdvd/ prefix, where
          * nothing exists. */
-        cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/", "");
-        cellfs_add_path_mapping("/dev_hdd0/game/NPUA80523/", "");
-        cellfs_add_path_mapping("/app_home/", "");
+        /* The title's files live in input/ -- input/USRDIR/data/... is the disc
+         * USRDIR, 1053 files. These mapped to the root instead, so every asset
+         * open resolved to ./USRDIR/... and missed:
+         *
+         *   [cellFs] Open: fopen('.\USRDIR\data\snd\static.sgd') failed
+         *
+         * Losing the sound bank is what made SGX fail, tear itself down, and
+         * take the boot with it.
+         *
+         * The installed-data tree (gamedata/.../NPUA80523/USRDIR) is empty --
+         * the data-install flow created the directories and nothing else -- so
+         * the hdd game root points at the same place rather than at a hole.
+         * cellFs matches the longest prefix, so these win over the /dev_hdd0/
+         * device mapping below. */
+        cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/", "input/");
+        cellfs_add_path_mapping("/dev_hdd0/game/NPUA80523/", "input/");
+        cellfs_add_path_mapping("/app_home/", "input/");
     /* Point the hdd root at the installed game data -- cellFs joins host paths
      * under the root. The title stats /dev_hdd0 to confirm the device is there
      * and spins forever if it is not: it prints
