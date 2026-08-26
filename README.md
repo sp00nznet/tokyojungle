@@ -17,9 +17,11 @@ So we're doing it ourselves.
 ## Status: Phase 8 — Boots to a Window, Audio Initialises, Geometry Not Yet Drawing
 
 > **This is the first 3D title to attempt ps3recomp.** The game boots end-to-end,
-> opens a D3D12 window, runs its PSN data-install flow, brings up SPURS and the
-> SPU job manager, and completes audio initialisation. Its own clear colour
-> reaches the screen. It does not yet draw geometry.
+> opens a D3D12 window, runs its PSN data-install flow, brings up SPURS and all
+> twelve of its SPU job images, loads its game data, and completes audio
+> initialisation. Its own clear colour reaches the screen. It no longer hangs,
+> crashes or exits — it now parks in its main loop waiting on a single counter
+> that nothing in the emulator writes. It does not yet draw geometry.
 
 **A note on the function count.** Earlier builds advertised *35,208 lifted
 functions*. That number was wrong, and the current one is lower on purpose:
@@ -42,7 +44,8 @@ verified directly. The honest figure is **7,924**. A count going down was progre
 | Guest threads | **Done** — thread entry trampoline (every thread was a silent no-op) |
 | Graphics backend (RSX → D3D12) | **Partial** — window opens, clears present, no geometry |
 | PSN data-install flow | **Done** — DataCheck / CreateGameData handshake completes |
-| SPU job manager (SPURS) | **Partial** — chains walk, job guards work, 1 of 12 images lifted |
+| SPU job manager (SPURS) | **Done** — chains walk, job guards work, all 12 images lifted, 0 dispatch misses |
+| Game data / asset loading | **Done** — every file the boot asks for opens; sound banks load |
 | Audio (cellAudio) | **Partial** — init / PortOpen / PortStart succeed, no output device yet |
 | Input (cellPad → XInput/SDL) | Not Started |
 | Survival Mode playable | Not Started |
@@ -62,29 +65,80 @@ verified directly. The honest figure is **7,924**. A count going down was progre
 - **SPURS job chains** — the walker handles JOB / SYNC / NEXT / GUARD, and job
   guards are implemented, so a chain waits for its notify instead of running
   against parameters the game has not filled in yet
-- **One SPU image lifted and dispatched** — the "soc-job" sound down-mix chain,
-  captured with `SPU_DUMP_MISS` and matched by content fingerprint
+- **All 12 SPU images lifted and dispatched** — captured with `SPU_DUMP_MISS`,
+  matched by content fingerprint, 4,751 SPU functions, zero dispatch misses. The
+  sound jobs run to completion, read their work descriptors and DMA their results
+- **Every file the boot asks for opens** — the disc, hdd-game and `app_home` roots
+  all resolve into the title's real data (`input/USRDIR/`, 1,053 files); the sound
+  banks load. Zero failed opens across a run
+- **Complete lifting coverage** — all 7,410 functions the binary's `.opd` table
+  declares are present in the lifted set, so "the caller was never lifted" is ruled
+  out as an explanation when something does not run
 - **Audio initialisation** — `cellAudioInit`, `cellAudioPortOpen`,
   `cellAudioSetNotifyEventQueue` and `cellAudioPortStart` all complete
 - **Diagnostics that earn their keep** — `TJ_GENMAP` (stub address → import name),
-  `TJ_OPD_GUARD` (write-protect the OPD arena), `PS3_SCTRACE`, `TJ_IMPTRACE`,
-  and a watchdog that resolves a wedged thread back to a guest function
+  `TJ_OPD_GUARD` (write-protect the OPD arena), `PS3_SCTRACE`, `TJ_IMPTRACE`, and a
+  watchdog that reports the HLE *and* lv2 syscall a wedged thread is inside
+  (`in_hle=` / `syscall=`) plus the counter it is polling (`TJ_POLLWATCH`,
+  `TJ_TIMEWATCH`). The watchdog's `CTR` is the last `bctrl` target and goes stale
+  the moment a call returns — it named `sys_lwmutex_unlock` for a thread that had
+  long since left it, which is why the per-thread tables exist.
 
-### Current Blockers
+> **Measure with `PS3_VERBOSE=0`.** The per-event logging is heavy enough to change
+> what the title does, not just how fast: every guest thread writes through one
+> `FILE` lock, and at the ~6k lines/s a SPURS audio chain produces a thread can
+> starve on it for seconds. This title presents four frames in 40 s with the log
+> discarded and one with it redirected to a file. Note that `ps3_log_verbose()`
+> treats a non-tty stderr as "be verbose", so *redirecting to a file turns the
+> firehose on* unless you say otherwise.
 
-- **No geometry** — the frame clears and presents, but nothing is drawn into it.
-  This is the headline problem and the next thing to solve.
-- **11 of 12 SPU images are unlifted** — the title dispatches ~100 SPU jobs across
-  12 distinct images per run and only the sound job is implemented; the rest log
-  `dispatch MISS` and return without doing anything
-- **A crash shortly after `cellGcmMapMainMemory`**, i.e. once audio init stops
-  blocking the boot and the game reaches render setup
+### Current Blocker
+
+**One counter the title waits on is never written.** The boot no longer hangs,
+crashes or exits: every worker thread stays alive, the vblank handler runs at
+~60 Hz, and the frame presents. The main loop then parks in `func_00213A14`,
+which waits on two things — an outstanding-request count, already zero, and
+
+    [r31+0x1A0] + 3 >= [[TOC+0x1860] + 0x18]        (guest 0x00C04A68)
+
+That second field reads **0 forever**. Nothing writes it: not guest stores, not
+an HLE, not SPU DMA — all three checked, the last two only after extending the
+write-watch to cover the inline `vm_write*` family that `libs/` uses. Ticking it
+by hand (`TJ_TICK_GAMECLOCK`, off by default) takes the log from ~3,400 lines to
+559,486 and the title runs on, so it is definitively what holds the boot. What
+*should* write it is still unknown, and that is the next thing to solve.
+
+Everything downstream of it is consequence, not cause — including **no geometry**.
+
+Also outstanding, but not what is blocking:
+
 - **`cellFont` is held back** on the title's own stubs (`TJ_KEEP='cellFont*'`), so
   no UI text renders
+- **No audio output device** — the pipeline initialises and the SPU jobs run, but
+  nothing is wired to a host audio backend
 
 ### Recently Fixed
 
-Two bugs worth naming, because both spent a long time wearing a convincing disguise:
+Three that each moved the boot forward a stage:
+
+- **The title sat forever "waiting for device mounting".** `cellFsStat('/dev_hdd0')`
+  resolved one directory too high, so the device never appeared and the main thread
+  never returned to the render loop. The mapping carried a `../` that assumed the
+  process ran from `build/`, while the program loads its ELF relative to the project
+  root.
+- **Every asset open missed, which made the title quit.** The disc, hdd-game and
+  `app_home` roots pointed at the VFS root rather than `input/`, so
+  `data/snd/static.sgd` and everything beside it failed to open. Losing the sound
+  bank made SGX fail, tear itself down, and return −1 from `main`.
+- **SGX teardown deadlocked against its own audio thread.** The shutdown joins
+  `sgx-audio-thr`, which waits on the SPURS completion queue with an infinite
+  timeout — and `cellSpursFinalize` has already stopped the job chains, so no
+  completion can ever arrive. ps3recomp now cancels the queues SPURS attached;
+  waiters get `CELL_ECANCELED`, which the title's audio loop already treats as
+  "leave the loop".
+
+And two older ones worth naming, because both spent a long time wearing a
+convincing disguise:
 
 - **`cellAudioPortOpen` was allocating its audio buffer on top of the HLE OPD arena.**
   It used a hardcoded `0x01000000`, commented "free window" — which is exactly where
@@ -199,6 +253,7 @@ tokyojungle/
 
 This is an ambitious preservation project and help is very welcome. The biggest areas of need:
 
+- **The stalled counter** — the current blocker, described above: find what should write `0x00C04A68` (`[[TOC+0x1860]+0x18]`). Ruled out already: guest stores, HLE stores, SPU DMA, and any lifting gap. Everything else, including the missing geometry, is downstream of it.
 - **RSX Graphics Reverse Engineering** — Working out why the game's draw calls never reach the D3D12 backend. The frame clears and presents correctly, so the path is open; something upstream is not submitting geometry.
 - **SPU Program Analysis** — The title dispatches around 100 SPU jobs per run across
   12 distinct images, and only one ("soc-job", the sound down-mix) is lifted. The
