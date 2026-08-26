@@ -67,3 +67,6 @@ project/
 # build trees and run logs (build-g/, trap.log from a crash run)
 build-*/
 trap.log
+
+# CELLMARK_DUMP output
+frame_*.bmp
