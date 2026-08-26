@@ -23,6 +23,7 @@
 #include <windows.h>
 
 #include "ppu_context.h"
+#include "recomp_bridge.h"   /* vm_write64 (diagnostic clock tick) */
 #include "sys_ppu_thread.h"
 
 /* TJ_THREADS=1: every 2 s, print each PPU thread's state and the guest address
@@ -78,6 +79,22 @@ static DWORD WINAPI tj_present_thread(LPVOID)
 
         int fired = 0;
         while ((long long)(now - next_tick) >= 0 && fired < 240) {
+            /* TJ_TICK_GAMECLOCK=<guestEA>: DIAGNOSTIC ONLY.
+             *
+             * The main loop waits for [[TOC+0x1860]+0x18] to pass a stored
+             * timestamp + 3, and that field reads 0 forever -- nothing writes
+             * it: not guest code, not an HLE, not SPU DMA (all three checked).
+             * Ticking it by hand says whether the wait is really what holds the
+             * boot, and in what units, without guessing.
+             *
+             * This is not a fix. Whatever should own that clock still has to be
+             * found; poking it from outside just makes the guest believe time
+             * passed. */
+            { static long ea = -1;
+              if (ea < 0) { const char* e = getenv("TJ_TICK_GAMECLOCK");
+                            ea = e ? strtol(e, nullptr, 0) : 0; }
+              if (ea > 0) { static uint64_t t = 0; vm_write64((uint32_t)ea, ++t); } }
+
             cellGcmTickVBlank();
             cellGcmTickFlip();
             if (rsx_ok && cellGcm_take_flip_pending())
