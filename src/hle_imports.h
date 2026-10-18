@@ -13,6 +13,10 @@
 
 #include <cstdio>
 #include <cstring>
+#include "ppu_thread_exit_signal.h"
+#include "sys_ppu_thread.h"
+
+static constexpr uint32_t TJ_CELL_ENOSYS = 0x80010003u;
 
 extern "C" {
 #include "ppu_context.h"
@@ -136,7 +140,7 @@ static void hle_generic_ok(ppu_context* ctx) {
     ctx->gpr[3] = 0;
 }
 
-// --- Silent return-OK stub (for mass-patched OPDs) ---
+// --- Unresolved OPD fallback ---
 //
 // Diagnoses retry-loops on unresolved imports: prints unique caller LRs and
 // arg patterns the first ~30 hits, then logs every 10000th hit thereafter
@@ -148,7 +152,7 @@ static void hle_silent_ok(ppu_context* ctx) {
     uint32_t lr = (uint32_t)ctx->lr;
     if (s_call_count <= 30 || (lr != s_last_lr) || (s_call_count % 10000) == 0) {
         fprintf(stderr,
-            "[silent_ok #%d] LR=0x%08X r3=0x%llX r4=0x%llX r5=0x%llX\n",
+            "[unresolved_opd #%d] LR=0x%08X r3=0x%llX r4=0x%llX r5=0x%llX\n",
             s_call_count, lr,
             (unsigned long long)ctx->gpr[3],
             (unsigned long long)ctx->gpr[4],
@@ -156,7 +160,7 @@ static void hle_silent_ok(ppu_context* ctx) {
         fflush(stderr);
         s_last_lr = lr;
     }
-    ctx->gpr[3] = 0;
+    ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)TJ_CELL_ENOSYS;
 }
 
 // --- Memory allocation (sysPrxForUser _sys_malloc etc.) ---
@@ -305,7 +309,8 @@ static void hle_thread_create(ppu_context* ctx) {
 
 static void hle_thread_exit(ppu_context* ctx) {
     printf("[HLE] sys_ppu_thread_exit(0x%08X)\n", (uint32_t)ctx->gpr[3]);
-    ctx->gpr[3] = 0;
+    sys_ppu_thread_exit(ctx);
+    ppu_throw_thread_exit();
 }
 
 static void hle_thread_once(ppu_context* ctx) {
@@ -588,7 +593,8 @@ static void hle_generic_named(ppu_context* ctx) {
         if (n++ < 16)
             printf("[HLE] generic dispatch with ctr=0x%08X (idx %u out of range)\n",
                    (uint32_t)ctx->ctr, idx);
-        ctx->gpr[3] = 0; return;
+        ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)TJ_CELL_ENOSYS;
+        return;
     }
 
     uint32_t slot = g_generic_slot[idx];
@@ -622,7 +628,7 @@ static void hle_generic_named(ppu_context* ctx) {
                (uint32_t)ctx->gpr[4], (uint32_t)ctx->gpr[5],
                (uint32_t)ctx->gpr[6]);
     }
-    ctx->gpr[3] = 0;
+    ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)TJ_CELL_ENOSYS;
 }
 
 /* Prefer ps3recomp's implementation for every import it actually has.

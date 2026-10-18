@@ -1,293 +1,108 @@
 # Tokyo Jungle Recompiled
 
-![Tokyo Jungle running natively — the title screen, rendered by the recompiled game](assets/title-screen.gif)
+![Tokyo Jungle running natively, the title screen](assets/title-screen.gif)
 
-<sub>The title screen, live: recompiled PPU code, the game's own SPU workloads, and its RSX command stream on D3D12. No emulator.</sub>
+**A native PC port of Tokyo Jungle (PS3, 2012), made by static recompilation. No emulator.**
 
-**A Pomeranian walks into post-apocalyptic Tokyo. No, seriously.**
+Tokyo Jungle was a digital-only PS3 exclusive whose studios are gone, and the PS3 store is closing.
+This project turns the game's own PS3 code into a Windows program using
+[ps3recomp](https://github.com/sp00nznet/ps3recomp). You supply your own copy of the game.
 
-Tokyo Jungle (2012) is the most wonderfully absurd game Sony ever published — a survival action game where you play as animals fighting for dominance in a Tokyo abandoned by humanity. One moment you're a tiny Pomeranian sneaking past lions in Shibuya, the next you're a dinosaur asserting territorial control over Yoyogi Park. It's brutal. It's beautiful. It has no business being as good as it is.
+## Status: Playable
 
-And it's about to disappear.
+- **Survival mode works start to finish.** A full **102-year run** (about 2 hours) was played with no crash or freeze.
+- **60 FPS**, including big fights. In the October 17 play test every second with 800+ draws stayed at 60
+  (82 s of play: average 59.9 FPS, one second at 52).
+- **2K mode:** renders at 2560x1440 (2x the PS3's 1280x720) for sharp grass and edges. 720p is still the default.
+- **PC controls:** keyboard, mouse buttons and Xbox controllers, all rebindable in game. Menus show PC key prompts.
+- **Still to check:** Story mode, save and reload across sessions, and local 2-player.
 
-## Why This Exists
+![The game's Stats screen after the run: Max years survived 102](assets/stats-102-years.jpg)
 
-Tokyo Jungle was a PS3 exclusive. The Western release was **digital-only** — no disc, no physical backup. Both of its developers are gone (Japan Studio dissolved 2021, Crispy's dormant since 2015). The PS3 store is running on fumes. Sony's PS Plus cloud streaming for PS3 titles has been [broken for months](https://www.playstationlifestyle.net/2026/01/18/ps3-game-streaming-busted-ps-plus-premium/). Nobody is coming to save this game.
+![Grass at the PS3's 720p (left) and in 2K mode (right)](assets/grass-720p-vs-2k.png)
 
-So we're doing it ourselves.
+*Left: the PS3's 720p. Right: 2K mode.*
 
-**Tokyo Jungle Recompiled** is a native PC port built using [ps3recomp](https://github.com/sp00nznet/ps3recomp) — a static recompilation toolchain that translates PS3 PowerPC binaries into native C code, then compiles them as x86-64 executables. No emulation at runtime. No compatibility layers. Just raw, recompiled native code.
+## Controls
 
-## Status: Phase 8 — Boots to a Window, Audio Initialises, Geometry Not Yet Drawing
+Press **F1** in game (or **Back + Start** on a controller) to change any key or button.
+Each row shows what the action does. Changes save to `controls.ini` and work right away.
 
-> **This is the first 3D title to attempt ps3recomp.** The game boots end-to-end,
-> opens a D3D12 window, runs its PSN data-install flow, brings up SPURS and all
-> twelve of its SPU job images, loads its game data, and completes audio
-> initialisation. Its own clear colour reaches the screen. It no longer hangs,
-> crashes or exits — it now parks in its main loop waiting on a single counter
-> that nothing in the emulator writes. It does not yet draw geometry.
+![The in-game Controls screen](assets/controls-screen.jpg)
 
-**A note on the function count.** Earlier builds advertised *35,208 lifted
-functions*. That number was wrong, and the current one is lower on purpose:
-`find_functions` was treating intra-function basic blocks as separate function
-entries, inventing tens of thousands of phantoms. It now covers those blocks
-properly. The fix was checked against ground truth on a *different* title that
-ships an unstripped debug build (+90 real functions recovered, 0 phantoms
-introduced) — Tokyo Jungle's own binary is stripped, so its count cannot be
-verified directly. The honest figure is **7,924**. A count going down was progress.
+Button prompts in the game's menus show your PC keys instead of PS3 buttons, and follow your bindings:
 
-| Milestone | Status |
-|-----------|--------|
-| Binary analysis & function discovery | **Done** — 7,924 functions, ground-truth verified |
-| PPU disassembly & code lifting | **Done** — 7 body overrides (heap, abort, pure-virtual) |
-| Project scaffold & build system | **Done** — clang-cl + Ninja |
-| ELF loading & VM setup | **Done** — 4 GB space, 256 MB VRAM, callback stacks, GCM page |
-| CRT initialization | **Done** — argv, TLS (`r13`), guest heap redirected |
-| LV2 syscall dispatch | **Done** — plus `PS3_SCTRACE` with guest-caller resolution |
-| Import table resolution (PLT/NID) | **Done** — slots derived from the module descriptors |
-| Guest threads | **Done** — thread entry trampoline (every thread was a silent no-op) |
-| Graphics backend (RSX → D3D12) | **Partial** — window opens, clears present, no geometry |
-| PSN data-install flow | **Done** — DataCheck / CreateGameData handshake completes |
-| SPU job manager (SPURS) | **Done** — chains walk, job guards work, all 12 images lifted, 0 dispatch misses |
-| Game data / asset loading | **Done** — every file the boot asks for opens; sound banks load |
-| Audio (cellAudio) | **Partial** — init / PortOpen / PortStart succeed, no output device yet |
-| Input (cellPad → XInput/SDL) | Not Started |
-| Survival Mode playable | Not Started |
-| Story Mode playable | Not Started |
-| DLC species support | Not Started |
+![PS3 button prompts (top) and the PC key prompts that replace them (bottom)](assets/pc-key-prompts.png)
 
-### What's Working
+| Action | Keyboard | Controller |
+|--------|----------|------------|
+| Move | W A S D | Left stick |
+| Dodge | Arrow keys | Right stick |
+| Jump | Space or Z | A |
+| Eat / mark / carry | F | B |
+| Claw attack | E | X |
+| Pack: fight / decoy | V | Y |
+| Creep / Bite | Left Ctrl / Left Shift | LB / RB |
+| Roar | Caps Lock | Right stick click |
+| Pack commands | 1 | LT |
+| Pause, map / Info | Enter / Backspace | Start / Back |
+| Items, menus | Numpad 8 / 2 / 4 / 6 | D-pad |
 
-- **7,924 PPU functions** recompiled to native C++ and compiled to x86-64
-- **A window with the game's own pixels in it** — `CELL_GCM` `CLEAR_SURFACE` reaches
-  the D3D12 backend and presents; the frame colour is the guest's, not ours
-- **The PS3 data-install flow** — the title's installer runs to completion, which
-  needed all three of ps3recomp's independent path roots configured (`sys_fs`
-  syscalls, the `cellFs` HLE prefix table, and `cellGame`'s content path)
-- **Guest threads actually run** — `ppu_install_thread_trampoline`; without it every
-  `sys_ppu_thread_create` thread spawned, reported FINISHED, and executed nothing
-- **SPURS job chains** — the walker handles JOB / SYNC / NEXT / GUARD, and job
-  guards are implemented, so a chain waits for its notify instead of running
-  against parameters the game has not filled in yet
-- **All 12 SPU images lifted and dispatched** — captured with `SPU_DUMP_MISS`,
-  matched by content fingerprint, 4,751 SPU functions, zero dispatch misses. The
-  sound jobs run to completion, read their work descriptors and DMA their results
-- **Every file the boot asks for opens** — the disc, hdd-game and `app_home` roots
-  all resolve into the title's real data (`input/USRDIR/`, 1,053 files); the sound
-  banks load. Zero failed opens across a run
-- **Complete lifting coverage** — all 7,410 functions the binary's `.opd` table
-  declares are present in the lifted set, so "the caller was never lifted" is ruled
-  out as an explanation when something does not run
-- **Audio initialisation** — `cellAudioInit`, `cellAudioPortOpen`,
-  `cellAudioSetNotifyEventQueue` and `cellAudioPortStart` all complete
-- **Diagnostics that earn their keep** — `TJ_GENMAP` (stub address → import name),
-  `TJ_OPD_GUARD` (write-protect the OPD arena), `PS3_SCTRACE`, `TJ_IMPTRACE`, and a
-  watchdog that reports the HLE *and* lv2 syscall a wedged thread is inside
-  (`in_hle=` / `syscall=`) plus the counter it is polling (`TJ_POLLWATCH`,
-  `TJ_TIMEWATCH`). The watchdog's `CTR` is the last `bctrl` target and goes stale
-  the moment a call returns — it named `sys_lwmutex_unlock` for a thread that had
-  long since left it, which is why the per-thread tables exist.
+To quit, close the window. A save in progress finishes first.
 
-> **Measure with `PS3_VERBOSE=0`.** The per-event logging is heavy enough to change
-> what the title does, not just how fast: every guest thread writes through one
-> `FILE` lock, and at the ~6k lines/s a SPURS audio chain produces a thread can
-> starve on it for seconds. This title presents four frames in 40 s with the log
-> discarded and one with it redirected to a file. Note that `ps3_log_verbose()`
-> treats a non-tty stderr as "be verbose", so *redirecting to a file turns the
-> firehose on* unless you say otherwise.
+## Build and run
 
-### Current Blocker
-
-**One counter the title waits on is never written.** The boot no longer hangs,
-crashes or exits: every worker thread stays alive, the vblank handler runs at
-~60 Hz, and the frame presents. The main loop then parks in `func_00213A14`,
-which waits on two things — an outstanding-request count, already zero, and
-
-    [r31+0x1A0] + 3 >= [[TOC+0x1860] + 0x18]        (guest 0x00C04A68)
-
-That second field reads **0 forever**. Nothing writes it: not guest stores, not
-an HLE, not SPU DMA — all three checked, the last two only after extending the
-write-watch to cover the inline `vm_write*` family that `libs/` uses. Ticking it
-by hand (`TJ_TICK_GAMECLOCK`, off by default) takes the log from ~3,400 lines to
-559,486 and the title runs on, so it is definitively what holds the boot. What
-*should* write it is still unknown, and that is the next thing to solve.
-
-Everything downstream of it is consequence, not cause — including **no geometry**.
-
-Also outstanding, but not what is blocking:
-
-- **`cellFont` is held back** on the title's own stubs (`TJ_KEEP='cellFont*'`), so
-  no UI text renders
-- **No audio output device** — the pipeline initialises and the SPU jobs run, but
-  nothing is wired to a host audio backend
-
-### Recently Fixed
-
-Three that each moved the boot forward a stage:
-
-- **The title sat forever "waiting for device mounting".** `cellFsStat('/dev_hdd0')`
-  resolved one directory too high, so the device never appeared and the main thread
-  never returned to the render loop. The mapping carried a `../` that assumed the
-  process ran from `build/`, while the program loads its ELF relative to the project
-  root.
-- **Every asset open missed, which made the title quit.** The disc, hdd-game and
-  `app_home` roots pointed at the VFS root rather than `input/`, so
-  `data/snd/static.sgd` and everything beside it failed to open. Losing the sound
-  bank made SGX fail, tear itself down, and return −1 from `main`.
-- **SGX teardown deadlocked against its own audio thread.** The shutdown joins
-  `sgx-audio-thr`, which waits on the SPURS completion queue with an infinite
-  timeout — and `cellSpursFinalize` has already stopped the job chains, so no
-  completion can ever arrive. ps3recomp now cancels the queues SPURS attached;
-  waiters get `CELL_ECANCELED`, which the title's audio loop already treats as
-  "leave the loop".
-
-And two older ones worth naming, because both spent a long time wearing a
-convincing disguise:
-
-- **`cellAudioPortOpen` was allocating its audio buffer on top of the HLE OPD arena.**
-  It used a hardcoded `0x01000000`, commented "free window" — which is exactly where
-  this port keeps its import descriptor table. Opening an audio port `memset` 128 KB
-  of it to zero, after which every import resolved through those descriptors
-  dispatched to a null address. A null `bctr` returns *with r3 untouched*, so the
-  guest reads its own first argument back as a status code. The middleware duly
-  reported `failed to set notify queue (23A0)` — and `0x23A0` was not an error code
-  at all, it was the event-queue key it had just passed in.
-- **SPURS never signalled the application.** `cellSpursAttachLv2EventQueue` discarded
-  the queue id, so a thread blocked in `sys_event_queue_receive` waiting for job
-  completion could never be woken. The title sat there for its entire boot.
-
-## How It Works
-
-```
-PS3 ELF binary
-    ↓ decrypt & parse
-PPU PowerPC assembly
-    ↓ disassemble & lift
-Generated C source code (thousands of files)
-    ↓ compile with MSVC/GCC/Clang
-Native x86-64 executable
-    + ps3recomp runtime (HLE OS services)
-    + Graphics backend (RSX → D3D12)
-    + Audio/Input backends
-    ↓
-Tokyo Jungle on your PC
-```
-
-The ps3recomp toolchain handles the heavy lifting of translating PowerPC instructions to equivalent C code. We provide game-specific configuration, function stubs, and fixes on top.
-
-## Building
-
-### Prerequisites
-
-- **CMake** 3.20+
-- **C++20 compiler** — MSVC 2022 (19.35+), GCC 12+, or Clang 14+
-- **Python** 3.10+ with packages: `pycryptodome`, `capstone`, `construct`, `tabulate`, `tomli`, `tqdm`
-- **ps3recomp** — clone from [sp00nznet/ps3recomp](https://github.com/sp00nznet/ps3recomp)
-- **A legitimate copy of Tokyo Jungle** (NPUA80523 / BCAS20219) — you must legally own the game
-- **Ninja** (recommended build system)
-
-### Steps
+You need Windows, CMake, Ninja, LLVM (clang-cl), Visual Studio 2022 Build Tools, Python 3.10+,
+and your own legally owned copy of Tokyo Jungle (NPUA80523).
 
 ```bash
-# Clone with submodule
-git clone --recursive https://github.com/sp00nznet/tokyojungle.git
-cd tokyojungle
-
-# Install Python dependencies
+git clone https://github.com/LasVola/tokyojungle.git
+git clone https://github.com/sp00nznet/ps3recomp.git
+cd ps3recomp && git checkout d7fff845aca42b5083791801a01d150f5f0ec18c
+git apply ../tokyojungle/patches/ps3recomp/ps3recomp-tokyojungle-2026-10-17.patch
+cd ../tokyojungle
 pip install -r requirements.txt
-
-# Set up your decrypted ELF (you must provide this yourself)
-cp /path/to/your/EBOOT.ELF input/
-
-# Run the analysis pipeline (function discovery + lifting)
-python scripts/analyze.py
-
-# Post-lift processing (patches, stubs, dispatch table)
-python scripts/gen_stubs.py
-
-# Configure and build
-cmake -B build -G Ninja
-cmake --build build --config Release
-
-# Run
-./build/Release/tokyojungle.exe
+cp /path/to/your/EBOOT.ELF /path/to/your/PARAM.SFO input/
+python scripts/analyze.py && python scripts/gen_stubs.py && python scripts/post_lift.py
+python -I scripts/fuse_spu_loops.py --apply   # optional: faster geometry jobs
+cmake -B build-clang -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+cmake --build build-clang
 ```
 
-> **Note:** You must supply your own legally obtained game files. This project does not include, distribute, or link to any copyrighted game data.
+Run it with the tested settings (720p, 60 FPS):
 
-## Game IDs
+```powershell
+powershell -File scripts\launch_tokyojungle.ps1 -Run -Recommended -GameData <your extracted game folder>
+```
+
+2K mode (2560x1440, windowed, paced to the monitor's refresh):
+
+```powershell
+powershell -File scripts\launch_tokyojungle.ps1 -Run -Recommended -RenderScale 2 -DisplayVBlank -PresentPhase -GameData <your extracted game folder>
+```
+
+Which game files this was built and tested with (SHA-256, and the Redump disc it came from):
+[docs/GAME_INPUT_HASHES.md](docs/GAME_INPUT_HASHES.md).
+
+## More
+
+- [docs/TESTING.md](docs/TESTING.md): play-test log and frame-pacing numbers
+- [docs/HISTORY-2026-09.md](docs/HISTORY-2026-09.md): earlier development notes
+- [docs/ABOUT.md](docs/ABOUT.md): how the recompilation works, and why this game
 
 | Region | ID | Format |
 |--------|----|--------|
-| NA (Digital) | NPUA80523 | PSN |
+| NA (Digital) | NPUA80523 | PSN (tested) |
 | JP (Disc) | BCAS20219 | Blu-ray |
 | EU (Digital) | NPEA00421 | PSN |
 
-## Project Structure
+## Credits and legal
 
-```
-tokyojungle/
-├── config/
-│   └── tokyojungle.toml       # ps3recomp configuration
-├── src/
-│   ├── main.cpp                # Entry point, VM init, ELF loading
-│   ├── stubs.cpp               # Game-specific HLE overrides (trophy, network)
-│   ├── recomp_bridge.h         # Memory access, indirect call dispatch, syscalls
-│   ├── import_resolver.h       # PLT import table population & heap allocator
-│   ├── hle_imports.h           # 61 HLE handlers (cellGcm, cellPad, malloc, etc.)
-│   └── elf_loader.h            # ELF segment loader
-├── scripts/
-│   ├── analyze.py              # Binary analysis pipeline
-│   ├── gen_stubs.py            # Post-lift processing (TOC fix, bctr, stubs)
-│   └── add_traces.py           # Debug tracing for game functions
-├── input/                      # Your game files go here (gitignored)
-├── generated/                  # Recompiled C output (~150MB, gitignored)
-│   ├── ppu_recomp_0NN.cpp      # 7,924 lifted PPU functions
-│   ├── ppu_recomp.h            # Function declarations
-│   ├── ppu_stubs.c             # Manual CRT overrides (_start, init stubs)
-│   ├── dispatch_table.c        # Guest addr -> host func lookup table
-│   └── functions.json          # Function boundary list for lifter
-├── build/                      # Build output (gitignored)
-└── docs/
-    ├── PROGRESS.md             # Detailed progress log
-    └── TECHNICAL.md            # Technical notes & findings
-```
+- Original port and ps3recomp: [sp00nznet](https://github.com/sp00nznet).
+- This fork: renderer, 60 FPS and 2K work, pacing, stability and controls (August–October 2026), play-tested by LasVola.
 
-## Contributing
-
-This is an ambitious preservation project and help is very welcome. The biggest areas of need:
-
-- **The stalled counter** — the current blocker, described above: find what should write `0x00C04A68` (`[[TOC+0x1860]+0x18]`). Ruled out already: guest stores, HLE stores, SPU DMA, and any lifting gap. Everything else, including the missing geometry, is downstream of it.
-- **RSX Graphics Reverse Engineering** — Working out why the game's draw calls never reach the D3D12 backend. The frame clears and presents correctly, so the path is open; something upstream is not submitting geometry.
-- **SPU Program Analysis** — The title dispatches around 100 SPU jobs per run across
-  12 distinct images, and only one ("soc-job", the sound down-mix) is lifted. The
-  others are raw SPURS job binaries loaded from the game's own data files, so they
-  have to be captured at runtime with `SPU_DUMP_MISS` before they can be lifted.
-- **Game Logic Debugging** — Once code is lifted, tracking down crashes and behavioral bugs
-- **Testing** — Comparing behavior against RPCS3 reference runs
-
-If you've worked with PS3 internals, RPCS3, N64Recomp, or similar recompilation projects, your expertise would be invaluable.
-
-## License
-
-The code in this repository is MIT licensed — see [LICENSE](LICENSE). That covers
-*our* code only: the port scaffold, HLE glue, and build scripts. It does not and
-cannot cover Tokyo Jungle itself, and no game data is included here.
-
-## Legal
-
-This project is a clean-room recompilation toolchain output. It does not contain any proprietary Sony or game code. You must provide your own legally obtained game files. This project exists solely for game preservation purposes.
-
-**Tokyo Jungle** is a trademark of Sony Interactive Entertainment. This project is not affiliated with, endorsed by, or connected to Sony, Japan Studio, or Crispy's in any way.
-
-## A Love Letter
-
-Tokyo Jungle is one of those rare games that could only exist because someone at Sony said "sure, why not" to a pitch about a Pomeranian surviving the apocalypse. It's weird. It's wonderful. It sold over 500,000 copies. It got a perfect score from Famitsu. And in a few years, without intervention, it will exist only in YouTube videos and fond memories.
-
-Games like this don't deserve to vanish just because the hardware they ran on becomes obsolete. If you've ever watched a golden retriever take down a crocodile in the streets of Shibuya, you know exactly why this project exists.
+The code here is MIT licensed ([LICENSE](LICENSE)). No game data is included; you must use your own copy.
+**Tokyo Jungle** is a trademark of Sony Interactive Entertainment. This project is not affiliated with
+Sony, Japan Studio or Crispy's.
 
 **Let's keep Tokyo Jungle alive.**
-
----
-
-*Built with [ps3recomp](https://github.com/sp00nznet/ps3recomp) | Star this repo if you want to pet the Pomeranian*

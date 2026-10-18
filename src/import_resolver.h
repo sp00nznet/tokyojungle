@@ -6,7 +6,7 @@
  * 0x0025Fxxx to dispatch correctly through ppc_indirect_call().
  *
  * Architecture:
- *   1. Reserve a VM region (0x01000000) for HLE function descriptors (OPDs)
+ *   1. Reserve a VM region (0x2F000000) for HLE function descriptors (OPDs)
  *   2. For each import, create an OPD {hle_guest_addr, TOC}
  *   3. Write the OPD address into the import table slot (0x342xxx)
  *   4. The HLE function at hle_guest_addr is registered in the dispatch table
@@ -21,6 +21,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+#include "ps3emu/endian.h"
 
 extern "C" {
 #include "ppu_context.h"
@@ -39,64 +41,116 @@ extern uint8_t* vm_base;
  * ====================================================================== */
 
 static uint32_t g_heap_base  = 0x02000000;  // Start of heap region
-static uint32_t g_heap_ptr   = 0x02000000;  // Current allocation pointer
-/* 0x02000000-0x0E000000 = 192 MB. This is a BUMP allocator that never reuses a
- * freed block (see hle_malloc below), so the ceiling is not "how much the title
- * needs live at once" but "how much it ever allocates". 96 MB was enough only
- * while the title stalled early; once its audio came up and it got as far as
- * loading sound banks it ran dry and every later allocation returned 0:
- *
- *   [HLE] ERROR: heap exhausted! (requested 65536 bytes)   x37, then a stall
- *
- * 0x0E000000 keeps clear of the RSX staging area higher up while giving the
- * bump pointer twice the room. ponytail: raising the ceiling, not adding reuse
- * -- a real allocator is the fix if a title outruns this too. */
-static uint32_t g_heap_end   = 0x0E000000;  // 192 MB heap space (bump, no reuse)
+static uint32_t g_heap_end   = 0x0C000000;  // 160 MB; audio starts at 0x0C000000
+static constexpr uint32_t g_heap_gcm_hole_begin = 0x03000000;
+static constexpr uint32_t g_heap_gcm_hole_end   = 0x03010000;
 static int      g_heap_inited = 0;
 
-void hle_heap_init() {
-    if (g_heap_inited) return;
-    // Commit the heap region
-    vm_commit(g_heap_base, g_heap_end - g_heap_base);
-    memset(vm_base + g_heap_base, 0, g_heap_end - g_heap_base);
-    g_heap_inited = 1;
-    printf("[HLE] Heap initialized: 0x%08X - 0x%08X (%u MB)\n",
-           g_heap_base, g_heap_end, (g_heap_end - g_heap_base) / (1024*1024));
+/* The original bring-up allocator only moved a pointer forward. Tokyo Jungle
+ * actively frees transient title/loading assets, so entering the main menu
+ * exhausted all 160 MB even though most old blocks were dead. Keep allocator
+ * metadata on the host and reuse/coalesce guest blocks. A fixed table avoids
+ * recursively depending on the guest heap while servicing malloc itself. */
+struct HleHeapBlock {
+    uint32_t addr;
+    uint32_t size;
+    bool free;
+};
+static constexpr uint32_t HLE_HEAP_MAX_BLOCKS = 65536;
+static HleHeapBlock g_heap_blocks[HLE_HEAP_MAX_BLOCKS];
+static uint32_t g_heap_block_count = 0;
+static std::mutex g_heap_mutex;
+
+static bool hle_heap_insert_locked(uint32_t index, const HleHeapBlock& block) {
+    if (g_heap_block_count >= HLE_HEAP_MAX_BLOCKS || index > g_heap_block_count)
+        return false;
+    memmove(&g_heap_blocks[index + 1], &g_heap_blocks[index],
+            (g_heap_block_count - index) * sizeof(HleHeapBlock));
+    g_heap_blocks[index] = block;
+    g_heap_block_count++;
+    return true;
 }
 
-/* The guest heap spans 0x02000000-0x08000000, and the GCM control block the
- * RSX pump reads put/get/ref from sits at 0x03002000 -- INSIDE it. Nothing
- * stopped an allocation from landing on top of it, and one does: this title
- * loads an 8,995,536-byte sound bank at 0x02984790, which runs to 0x03219360
- * and buries the control registers. The pump then reads put=0x2700E02D and
- * ref=0xF0F0F00F -- sound data -- and anything waiting on a fence waits
- * forever. Skip the region instead. */
-#define TJ_GCM_CTRL_LO  0x03000000u
-#define TJ_GCM_CTRL_HI  0x03010000u
+void hle_heap_init() {
+    std::lock_guard<std::mutex> lock(g_heap_mutex);
+    if (g_heap_inited) return;
+    // 0x03000000..0x0300FFFF belongs to cellGcmSys labels/control state.
+    // Keep the title heap from initializing or allocating over that page.
+    vm_commit(g_heap_base, g_heap_gcm_hole_begin - g_heap_base);
+    memset(vm_base + g_heap_base, 0, g_heap_gcm_hole_begin - g_heap_base);
+    vm_commit(g_heap_gcm_hole_end, g_heap_end - g_heap_gcm_hole_end);
+    memset(vm_base + g_heap_gcm_hole_end, 0, g_heap_end - g_heap_gcm_hole_end);
+    g_heap_blocks[0] = {g_heap_base, g_heap_gcm_hole_begin - g_heap_base, true};
+    g_heap_blocks[1] = {g_heap_gcm_hole_end, g_heap_end - g_heap_gcm_hole_end, true};
+    g_heap_block_count = 2;
+    g_heap_inited = 1;
+    printf("[HLE] Free-list heap initialized: 0x%08X - 0x%08X (GCM hole 0x%08X - 0x%08X)\n",
+           g_heap_base, g_heap_end, g_heap_gcm_hole_begin, g_heap_gcm_hole_end);
+}
 
-uint32_t hle_malloc(uint32_t size) {
+static uint32_t hle_alloc_aligned(uint32_t size, uint32_t align) {
+    if (size > UINT32_MAX - 15u) return 0;
     if (!g_heap_inited) hle_heap_init();
-    // Align to 16 bytes
+
     size = (size + 15) & ~15u;
     if (size == 0) size = 16;
-
-    /* Jump the reserved GCM window if this block would straddle it. */
-    if (!getenv("TJ_NO_GCM_SKIP") && g_heap_ptr < TJ_GCM_CTRL_HI && g_heap_ptr + size > TJ_GCM_CTRL_LO) {
-        printf("[HLE] heap: skipping GCM control window for a %u-byte block\n", size);
-        g_heap_ptr = TJ_GCM_CTRL_HI;
+    if (align < 16) align = 16;
+    if (align & (align - 1)) {
+        uint32_t power = 16;
+        while (power < align && power < 0x80000000u) power <<= 1;
+        align = power;
     }
 
-    uint32_t addr = g_heap_ptr;
-    g_heap_ptr += size;
+    uint32_t result = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_heap_mutex);
+        for (uint32_t i = 0; i < g_heap_block_count; i++) {
+            HleHeapBlock old = g_heap_blocks[i];
+            if (!old.free) continue;
+            uint64_t aligned = ((uint64_t)old.addr + align - 1) & ~((uint64_t)align - 1);
+            uint64_t old_end = (uint64_t)old.addr + old.size;
+            uint64_t end = aligned + size;
+            if (end > old_end) continue;
 
-    if (g_heap_ptr > g_heap_end) {
-        printf("[HLE] ERROR: heap exhausted! (requested %u bytes)\n", size);
-        return 0;
+            uint32_t prefix = (uint32_t)(aligned - old.addr);
+            uint32_t suffix = (uint32_t)(old_end - end);
+            uint32_t needed = (prefix ? 1u : 0u) + (suffix ? 1u : 0u);
+            if (g_heap_block_count + needed > HLE_HEAP_MAX_BLOCKS) break;
+
+            if (prefix) {
+                g_heap_blocks[i] = {old.addr, prefix, true};
+                hle_heap_insert_locked(++i, {(uint32_t)aligned, size, false});
+            } else {
+                g_heap_blocks[i] = {(uint32_t)aligned, size, false};
+            }
+            if (suffix)
+                hle_heap_insert_locked(i + 1, {(uint32_t)end, suffix, true});
+            result = (uint32_t)aligned;
+            break;
+        }
+
+        if (!result) {
+            uint64_t total_free = 0;
+            uint32_t largest = 0;
+            for (uint32_t i = 0; i < g_heap_block_count; i++)
+                if (g_heap_blocks[i].free) {
+                    total_free += g_heap_blocks[i].size;
+                    if (g_heap_blocks[i].size > largest) largest = g_heap_blocks[i].size;
+                }
+            printf("[HLE] ERROR: heap allocation failed (requested=%u align=%u free=%llu largest=%u blocks=%u)\n",
+                   size, align, (unsigned long long)total_free, largest, g_heap_block_count);
+        }
     }
-    return addr;
+    if (result) memset(vm_base + result, 0, size);
+    return result;
+}
+
+uint32_t hle_malloc(uint32_t size) {
+    return hle_alloc_aligned(size, 16);
 }
 
 uint32_t hle_calloc(uint32_t count, uint32_t size) {
+    if ((uint64_t)count * size > UINT32_MAX) return 0;
     uint32_t total = count * size;
     uint32_t addr = hle_malloc(total);
     if (addr) {
@@ -106,16 +160,41 @@ uint32_t hle_calloc(uint32_t count, uint32_t size) {
 }
 
 uint32_t hle_memalign(uint32_t align, uint32_t size) {
-    if (!g_heap_inited) hle_heap_init();
-    if (align < 16) align = 16;
-    // Align the current pointer
-    g_heap_ptr = (g_heap_ptr + align - 1) & ~(align - 1);
-    return hle_malloc(size);
+    return hle_alloc_aligned(size, align);
 }
 
 void hle_free(uint32_t addr) {
-    // Bump allocator doesn't free — this is fine for initial bring-up
-    (void)addr;
+    if (!addr || !g_heap_inited) return;
+    std::lock_guard<std::mutex> lock(g_heap_mutex);
+    for (uint32_t i = 0; i < g_heap_block_count; i++) {
+        if (g_heap_blocks[i].addr != addr || g_heap_blocks[i].free) continue;
+        g_heap_blocks[i].free = true;
+        if (i > 0 && g_heap_blocks[i - 1].free &&
+            g_heap_blocks[i - 1].addr + g_heap_blocks[i - 1].size == g_heap_blocks[i].addr) {
+            g_heap_blocks[i - 1].size += g_heap_blocks[i].size;
+            memmove(&g_heap_blocks[i], &g_heap_blocks[i + 1],
+                    (g_heap_block_count - i - 1) * sizeof(HleHeapBlock));
+            g_heap_block_count--;
+            i--;
+        }
+        if (i + 1 < g_heap_block_count && g_heap_blocks[i + 1].free &&
+            g_heap_blocks[i].addr + g_heap_blocks[i].size == g_heap_blocks[i + 1].addr) {
+            g_heap_blocks[i].size += g_heap_blocks[i + 1].size;
+            memmove(&g_heap_blocks[i + 1], &g_heap_blocks[i + 2],
+                    (g_heap_block_count - i - 2) * sizeof(HleHeapBlock));
+            g_heap_block_count--;
+        }
+        return;
+    }
+}
+
+uint32_t hle_allocation_size(uint32_t addr) {
+    if (!addr || !g_heap_inited) return 0;
+    std::lock_guard<std::mutex> lock(g_heap_mutex);
+    for (uint32_t i = 0; i < g_heap_block_count; i++)
+        if (g_heap_blocks[i].addr == addr && !g_heap_blocks[i].free)
+            return g_heap_blocks[i].size;
+    return 0;
 }
 
 /* ========================================================================
@@ -133,7 +212,7 @@ static inline void import_write32(uint32_t addr, uint32_t val) {
 }
 
 // OPD area: function descriptors for HLE imports
-#define HLE_OPD_BASE 0x01000000u
+#define HLE_OPD_BASE 0x2F000000u
 #define HLE_OPD_SIZE 0x00010000u  // 64KB, enough for 8192 OPDs
 
 static uint32_t g_next_opd = HLE_OPD_BASE;
@@ -181,10 +260,10 @@ static void resolve_import(uint32_t import_slot, uint32_t code_addr, uint32_t to
  * ====================================================================== */
 
 // Well-known stub addresses
-// For import table default: use a silent return-OK address from hle_imports.h
+// For import table default: use the explicit unresolved-OPD handler.
 // (registered at runtime in register_hle_imports)
 #define HLE_STUB_RETURN_OK   0x01100324  // HLE_ADDR_SILENT_OK = HLE_ADDR(201)
-// For OPD patching: same silent stub
+// For OPD patching: same logged CELL_ENOSYS fallback
 #define HLE_STUB_SILENT_OK   0x01100324
 
 static void resolve_all_imports(uint32_t toc) {
@@ -194,7 +273,7 @@ static void resolve_all_imports(uint32_t toc) {
 
     printf("[HLE] Resolving import table...\n");
 
-    // Default: point all imports to a generic return-OK stub
+    // Default: point imports to a logged CELL_ENOSYS fallback
     // The import table data addresses and their modules/NIDs are from imports.json
     // For now, we resolve ALL import slots to the generic stub,
     // then override specific ones with real implementations.
@@ -299,7 +378,7 @@ static void resolve_all_imports(uint32_t toc) {
     for (uint32_t slot = 0x3423E0; slot <= 0x342910; slot += 4) {
         uint32_t current = 0;
         memcpy(&current, vm_base + slot, 4);
-        current = __builtin_bswap32(current);
+        current = ps3_bswap32(current);
 
         // A slot is UNRESOLVED if it is zero, or if it still points into the
         // code segment. The PS3 ELF pre-fills every import pointer with the
@@ -314,8 +393,8 @@ static void resolve_all_imports(uint32_t toc) {
                           (current >= 0x00010000u && current < 0x00340000u);
         if (unresolved) {
             // Give each generically-resolved slot its OWN HLE address rather
-            // than sharing HLE_STUB_RETURN_OK. The handler is the same no-op,
-            // but the address identifies WHICH import the guest just called --
+            // than sharing HLE_STUB_RETURN_OK. The address identifies WHICH
+            // import the guest just called --
             // otherwise every unimplemented library call looks alike in the
             // log and there is no way to tell which one mattered.
             if (generic < TJ_GENERIC_MAX) {
@@ -334,30 +413,8 @@ static void resolve_all_imports(uint32_t toc) {
     printf("[HLE] Import table populated (%u OPDs created)\n",
            (g_next_opd - HLE_OPD_BASE) / 8);
 
-    // =====================================================================
-    // Patch unresolved function pointers (0x39800000) in the data segment.
-    // The PS3 dynamic linker normally patches these, but since we load the
-    // raw ELF without relocation processing, they remain as placeholders.
-    // Replace with the address of our generic HLE stub's OPD.
-    // =====================================================================
-    // Scan both code and data segments for unresolved function pointers.
-    // The value 0x39800000 appears in function descriptors (OPD entries)
-    // as the code address field. Replace with our generic HLE stub's
-    // guest address so ppc_indirect_call can dispatch it.
-    /* Data segment ONLY. 0x39800000 is also the encoding of `li r12,0`, the
-     * first instruction of every PPC64 import stub, so scanning .text stamped
-     * the HLE address over ~354 real instructions. */
-    uint32_t scan_start = 0x340000;
-    uint32_t scan_end   = 0x340000 + 0x8CE208;
-    int patched = 0;
-    uint8_t target_be[4] = {0x39, 0x80, 0x00, 0x00}; // 0x39800000 big-endian
-    for (uint32_t addr = scan_start; addr < scan_end - 3; addr += 4) {
-        if (memcmp(vm_base + addr, target_be, 4) == 0) {
-            // Replace code address with our HLE stub address (in dispatch table)
-            import_write32(addr, HLE_STUB_RETURN_OK);
-            patched++;
-        }
-    }
-    printf("[HLE] Patched %d unresolved function pointers (0x39800000 -> 0x%08X)\n",
-           patched, HLE_STUB_RETURN_OK);
+    // Resolve only identified import slots above. Never scan data for opcode
+    // patterns: 0x39800000 is also float 1/4096. This ELF has six real numeric
+    // constants with those bits (five TOC entries and the value at 0x3B56A8).
+    // Replacing them with HLE addresses corrupts original floating-point math.
 }

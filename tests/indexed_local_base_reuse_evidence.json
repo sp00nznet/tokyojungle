@@ -1,0 +1,61 @@
+{
+  "status": "rejected",
+  "scope": "native extracted-helper fixture only; no production source change retained",
+  "renderer": {
+    "pre_edit_sha256": "ED53BA222559CD32E13FB5ED82839B75E16147E317BA9B8556E372A2648255B8",
+    "post_restore_sha256": "ED53BA222559CD32E13FB5ED82839B75E16147E317BA9B8556E372A2648255B8",
+    "in_memory_candidate_sha256": "91AAA39CBD311D6DCA92636466BD3F203164EC383C240593E495F252B6C5BD4F"
+  },
+  "fixture": "test_indexed_local_base_reuse.py",
+  "method": {
+    "source": "Actual indexed readers/uploaders and cellGcm resolver extracted from production source; resolver and callers compiled as separate translation units.",
+    "compiler": "clang -O2 -std=c11",
+    "timing": "Windows QueryPerformanceCounter; five alternating 50 ms minimum blocks per path, hooks/counters disabled.",
+    "limits": "Native microbenchmark only. No project build, game run, scene distribution, or FPS claim."
+  },
+  "correctness": {
+    "result": "pass",
+    "cases": 100,
+    "coverage": [
+      "Primitive modes 1 through 10, restart disabled and enabled",
+      "Immediate, LOCAL u16/u32, and MAIN u16/u32 indices",
+      "Emitted topology, count, and vertex bytes compare equal",
+      "Live LOCAL index-byte mutation observed between fetches",
+      "MAIN mapping remap and unmap observed on each fetch",
+      "Valid effective address zero preserved"
+    ]
+  },
+  "resolver_call_counts": {
+    "meaning": "Calls during uploader cases, including the unchanged vertex-attribute resolutions.",
+    "kind_0_immediate": { "baseline": 175, "candidate": 175, "saved": 0 },
+    "kind_1_local_u16": { "baseline": 490, "candidate": 175, "saved": 315 },
+    "kind_2_local_u32": { "baseline": 490, "candidate": 175, "saved": 315 },
+    "kind_3_main_u16": { "baseline": 490, "candidate": 490, "saved": 0 },
+    "kind_4_main_u32": { "baseline": 490, "candidate": 490, "saved": 0 }
+  },
+  "timing_runs_ns_per_index": [
+    {
+      "run": "first valid split-TU run",
+      "local_u32": {
+        "baseline_median_min_max": [5.59, 4.30, 8.37],
+        "candidate_median_min_max": [4.34, 3.91, 6.84]
+      },
+      "main_u32": {
+        "baseline_median_min_max": [8.22, 8.00, 11.72],
+        "candidate_median_min_max": [10.06, 7.82, 11.54]
+      }
+    },
+    {
+      "run": "final fixture run with call-count output",
+      "local_u32": {
+        "baseline_median_min_max": [2.66, 2.54, 2.70],
+        "candidate_median_min_max": [2.00, 1.91, 2.31]
+      },
+      "main_u32": {
+        "baseline_median_min_max": [3.30, 3.23, 4.32],
+        "candidate_median_min_max": [3.49, 3.31, 3.82]
+      }
+    }
+  ],
+  "decision_reason": "Local index lookup savings are about 0.66 to 1.25 ns per fetch in these runs, while the MAIN fallback adds measured per-fetch overhead and the game's LOCAL/MAIN mix is unknown. This evidence does not justify addressing the observed roughly 12 ms average shortfall or 300 ms hitches."
+}
